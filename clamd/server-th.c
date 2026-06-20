@@ -26,6 +26,7 @@
 
 #include <pthread.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -63,6 +64,7 @@
 #include "session.h"
 #include "clamd_others.h"
 #include "shared.h"
+#include "engine_manager.h"
 
 #define BUFFSIZE 1024
 
@@ -152,7 +154,10 @@ static void scanner_thread(void *arg)
         shutdown(conn->sd, 2);
         closesocket(conn->sd);
     }
-    cl_engine_free(conn->engine);
+    if (conn->managed_engine)
+        engine_manager_release(conn->engine);
+    else
+        cl_engine_free(conn->engine);
     free(conn);
     return;
 }
@@ -204,6 +209,40 @@ int need_db_reload(void)
     }
     logg(LOGG_INFO, "SelfCheck: Database status OK.\n");
     return FALSE;
+}
+
+static time_t parse_keepalive(const char *duration)
+{
+    char *end;
+    unsigned long value;
+    unsigned long multiplier;
+    unsigned long seconds;
+
+    if (!duration)
+        return -1;
+    errno = 0;
+    value = strtoul(duration, &end, 10);
+    if (errno == ERANGE || end == duration || end[1] != '\0')
+        return -1;
+    switch (*end) {
+        case 's':
+            multiplier = 1;
+            break;
+        case 'm':
+            multiplier = 60;
+            break;
+        case 'h':
+            multiplier = 3600;
+            break;
+        default:
+            return -1;
+    }
+    if (value > ULONG_MAX / multiplier)
+        return -1;
+    seconds = value * multiplier;
+    if ((time_t)seconds < 0 || (unsigned long)(time_t)seconds != seconds)
+        return -1;
+    return (time_t)seconds;
 }
 
 /**
@@ -1399,6 +1438,27 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         options.general |= CL_SCAN_GENERAL_STORE_EXTRA_HASHES;
     }
 
+    if (optget(opts, "OnDemandDatabase")->enabled) {
+        time_t keepalive = parse_keepalive(optget(opts, "DatabaseKeepAlive")->strarg);
+        cl_error_t manager_status;
+
+        if (keepalive < 0) {
+            logg(LOGG_ERROR, "Invalid DatabaseKeepAlive value.\n");
+            cl_engine_free(engine);
+            return 1;
+        }
+        manager_status = engine_manager_init(engine,
+                                             optget(opts, "DatabaseDirectory")->strarg,
+                                             dboptions,
+                                             keepalive);
+        if (manager_status != CL_SUCCESS) {
+            logg(LOGG_ERROR, "Failed to initialize on-demand database manager: %s\n",
+                 cl_strerror(manager_status));
+            cl_engine_free(engine);
+            return 1;
+        }
+    }
+
     selfchk = optget(opts, "SelfCheck")->numarg;
     if (!selfchk) {
         logg(LOGG_INFO, "Self checking disabled.\n");
@@ -1582,7 +1642,10 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         /* signal that we can accept more connections */
         if (fds->nfds <= (unsigned)max_queue)
             pthread_cond_signal(&acceptdata.cond_nfds);
-        new_sd = fds_poll_recv(fds, selfchk ? (int)selfchk : -1, 1, event_wake_recv);
+        new_sd = fds_poll_recv(fds,
+                               engine_manager_enabled() ? 1 : (selfchk ? (int)selfchk : -1),
+                               1, event_wake_recv);
+        engine_manager_maybe_unload_idle();
 #ifdef _WIN32
         ResetEvent(event_wake_recv);
 #else
@@ -1746,6 +1809,8 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
             sighup = 0;
             if (!logg_file && (opt = optget(opts, "LogFile"))->enabled)
                 logg_file = opt->strarg;
+            if (engine_manager_enabled())
+                engine_manager_mark_stale();
         }
 
         /* SelfCheck */
@@ -1766,6 +1831,19 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         if (reload) {
             pthread_mutex_unlock(&reload_mutex);
             /* Reload was requested */
+            if (engine_manager_enabled()) {
+                engine_manager_mark_stale();
+                if (dbstat.entries)
+                    cl_statfree(&dbstat);
+                memset(&dbstat, 0, sizeof(struct cl_stat));
+                if (cl_statinidir(optget(opts, "DatabaseDirectory")->strarg, &dbstat) != CL_SUCCESS)
+                    logg(LOGG_WARNING, "Unable to refresh database status after reload request.\n");
+                pthread_mutex_lock(&reload_mutex);
+                reload = 0;
+                pthread_mutex_unlock(&reload_mutex);
+                time(&reloaded_time);
+                continue;
+            }
             pthread_mutex_lock(&reload_stage_mutex);
             if (reload_stage == RELOAD_STAGE__IDLE) {
                 /* Reloading not already taking place */
@@ -1830,6 +1908,7 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         thrmgr_setactiveengine(NULL);
         cl_engine_free(engine);
     }
+    engine_manager_shutdown();
 
     pthread_join(accept_th, NULL);
     fds_free(fds);

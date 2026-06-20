@@ -17,6 +17,8 @@ target_sources( clamd
         clamd.c
         clamd_others.c
         clamd_others.h
+        engine_manager.c
+        engine_manager.h
         localserver.c
         localserver.h
         scanner.c

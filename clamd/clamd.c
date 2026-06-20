@@ -490,7 +490,8 @@ int main(int argc, char **argv)
 
         /* load the database(s) */
         dbdir = optget(opts, "DatabaseDirectory")->strarg;
-        logg(LOGG_INFO_NF, "Reading databases from %s\n", dbdir);
+        if (!optget(opts, "OnDemandDatabase")->enabled)
+            logg(LOGG_INFO_NF, "Reading databases from %s\n", dbdir);
 
         if (optget(opts, "DetectPUA")->enabled) {
             dboptions |= CL_DB_PUA;
@@ -715,10 +716,12 @@ int main(int argc, char **argv)
             logg(LOGG_INFO_NF, "FIPS crypto hash limits enabled.\n");
         }
 
-        if ((ret = cl_load(dbdir, engine, &sigs, dboptions))) {
-            logg(LOGG_ERROR, "%s\n", cl_strerror(ret));
-            ret = 1;
-            break;
+        if (!optget(opts, "OnDemandDatabase")->enabled) {
+            if ((ret = cl_load(dbdir, engine, &sigs, dboptions))) {
+                logg(LOGG_ERROR, "%s\n", cl_strerror(ret));
+                ret = 1;
+                break;
+            }
         }
 
         if ((ret = statinidir(dbdir))) {
@@ -730,7 +733,8 @@ int main(int argc, char **argv)
         if (optget(opts, "DisableCertCheck")->enabled)
             cl_engine_set_num(engine, CL_ENGINE_DISABLE_PE_CERTS, 1);
 
-        logg(LOGG_INFO_NF, "Loaded %u signatures.\n", sigs);
+        if (!optget(opts, "OnDemandDatabase")->enabled)
+            logg(LOGG_INFO_NF, "Loaded %u signatures.\n", sigs);
 
         /* pcre engine limits - required for cl_engine_compile */
         if ((opt = optget(opts, "PCREMatchLimit"))->active) {
@@ -749,10 +753,12 @@ int main(int argc, char **argv)
             }
         }
 
-        if ((ret = cl_engine_compile(engine)) != 0) {
-            logg(LOGG_ERROR, "Database initialization error: %s\n", cl_strerror(ret));
-            ret = 1;
-            break;
+        if (!optget(opts, "OnDemandDatabase")->enabled) {
+            if ((ret = cl_engine_compile(engine)) != 0) {
+                logg(LOGG_ERROR, "Database initialization error: %s\n", cl_strerror(ret));
+                ret = 1;
+                break;
+            }
         }
 
         if (tcpsock || num_fd > 0) {

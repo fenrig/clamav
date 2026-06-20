@@ -64,6 +64,7 @@
 #include "scanner.h"
 #include "server.h"
 #include "session.h"
+#include "engine_manager.h"
 #include "thrmgr.h"
 
 #ifndef HAVE_FDPASSING
@@ -411,6 +412,8 @@ static int dispatch_command(client_conn_t *conn, enum commands cmd, const char *
 {
     int ret = 0;
     int bulk;
+    cl_error_t engine_status = CL_SUCCESS;
+    int is_scan_command;
     client_conn_t *dup_conn = (client_conn_t *)malloc(sizeof(struct client_conn_tag));
 
     if (!dup_conn) {
@@ -418,8 +421,21 @@ static int dispatch_command(client_conn_t *conn, enum commands cmd, const char *
         return -1;
     }
     memcpy(dup_conn, conn, sizeof(*conn));
-    dup_conn->cmdtype = cmd;
-    if (cl_engine_addref(dup_conn->engine)) {
+    dup_conn->cmdtype        = cmd;
+    dup_conn->managed_engine = 0;
+    is_scan_command          = cmd == COMMAND_FILDES || cmd == COMMAND_SCAN ||
+                               cmd == COMMAND_CONTSCAN || cmd == COMMAND_MULTISCAN ||
+                               cmd == COMMAND_ALLMATCHSCAN || cmd == COMMAND_INSTREAMSCAN;
+    if (engine_manager_enabled() && is_scan_command) {
+        dup_conn->engine = engine_manager_get(&engine_status);
+        if (!dup_conn->engine) {
+            logg(LOGG_ERROR, "Unable to load database on demand: %s\n", cl_strerror(engine_status));
+            conn_reply_error(conn, "Database initialization failed.");
+            free(dup_conn);
+            return -2;
+        }
+        dup_conn->managed_engine = 1;
+    } else if (cl_engine_addref(dup_conn->engine)) {
         logg(LOGG_ERROR, "cl_engine_addref() failed\n");
         free(dup_conn);
         return -1;
@@ -467,7 +483,10 @@ static int dispatch_command(client_conn_t *conn, enum commands cmd, const char *
         ret = -2;
     }
     if (ret) {
-        cl_engine_free(dup_conn->engine);
+        if (dup_conn->managed_engine)
+            engine_manager_release(dup_conn->engine);
+        else
+            cl_engine_free(dup_conn->engine);
         free(dup_conn);
     }
     return ret;

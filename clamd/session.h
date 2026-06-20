@@ -96,6 +96,7 @@ typedef struct client_conn_tag {
     struct cl_scan_options *options;
     const struct optstruct *opts;
     struct cl_engine *engine;
+    int managed_engine;
     time_t engine_timestamp;
     char term;
     threadpool_t *thrpool;

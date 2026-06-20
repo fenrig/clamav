@@ -717,7 +717,6 @@ class TC(testcase.TestCase):
         expected_results.append('Infected files: {}'.format(len(testpaths)))
         self.verify_output(output.out, expected=expected_results)
 
-
         #
         # Now retry with ScanOneNote disabled
         #
@@ -792,3 +791,79 @@ class TC(testcase.TestCase):
         expected_results = ['{}: OK'.format(testpath.name) for testpath in testpaths]
         expected_results.append('Infected files: 0')
         self.verify_output(output.out, expected=expected_results)
+
+    def test_clamd_13_on_demand_database(self):
+        self.step_name('Test on-demand database load and idle unload')
+
+        log_path = TC.path_tmp / 'clamd-on-demand.log'
+        try:
+            log_path.unlink()
+        except FileNotFoundError:
+            pass
+
+        config = '''
+            Foreground yes
+            PidFile {pid}
+            DatabaseDirectory {dbdir}
+            LogFile {log}
+            LogFileMaxSize 0
+            LogTime yes
+            OnDemandDatabase yes
+            DatabaseKeepAlive 1s
+            CommandReadTimeout 1
+            '''.format(pid=TC.clamd_pid, dbdir=TC.path_db, log=log_path)
+        if operating_system == 'windows':
+            config += '''
+                TCPSocket {socket}
+                TCPAddr localhost
+                '''.format(socket=TC.clamd_port_num)
+        else:
+            config += '''
+                LocalSocket {localsocket}
+                '''.format(localsocket=TC.clamd_socket)
+
+        clamd_config = TC.path_tmp / 'clamd-on-demand.conf'
+        clamd_config.write_text(config)
+        self.start_clamd(clamd_config=clamd_config)
+        testfile = TC.path_build / 'unit_tests' / 'input' / 'clamav_hdb_scanfiles' / 'clam.exe'
+
+        output = self.execute_command('{clamdscan} -p 5 -c {clamd_config}'.format(
+            clamdscan=TC.clamdscan, clamd_config=clamd_config))
+        assert output.ec == 0
+        assert 'Database loaded on demand' not in log_path.read_text()
+
+        output = self.execute_command('{clamdscan} --ping 5 --wait -c {clamd_config} {testfile}'.format(
+            clamdscan=TC.clamdscan,
+            clamd_config=clamd_config,
+            testfile=testfile))
+        assert output.ec == 1
+        self.verify_output(output.out, expected=['ClamAV-Test-File.UNOFFICIAL FOUND'])
+
+        deadline = time.time() + 5
+        log_text = ''
+        while time.time() < deadline:
+            log_text = log_path.read_text()
+            if 'Database unloaded after idle timeout.' in log_text:
+                break
+            time.sleep(0.25)
+
+        self.verify_output(log_text, expected=[
+            'On-demand database mode enabled; keep-alive is 1 seconds.',
+            'Database loaded on demand',
+            'On-demand database load completed in',
+            'Database unloaded after idle timeout.',
+        ])
+
+        output = self.execute_command('{clamdscan} -c {clamd_config} {testfile}'.format(
+            clamdscan=TC.clamdscan,
+            clamd_config=clamd_config,
+            testfile=testfile))
+        assert output.ec == 1
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            log_text = log_path.read_text()
+            if log_text.count('Database loaded on demand') >= 2:
+                break
+            time.sleep(0.25)
+        assert log_text.count('Database loaded on demand') == 2

@@ -66,6 +66,7 @@
 #define MATCH_NUMBER "^[0-9]+((( +)?#(.*))?)$"
 #define MATCH_SIZE   "^[0-9]+[KMG]?(( +)?#(.*))?$"
 #define MATCH_BOOL   "^(yes|true|1|no|false|0)(( +)?#(.*))?$"
+#define MATCH_DURATION "^[0-9]+[smh](( +)?#(.*))?$"
 
 #define FLAG_MULTIPLE 1 /* option can be used multiple times */
 #define FLAG_REQUIRED 2 /* arg is required, even if there's a default value */
@@ -366,6 +367,10 @@ const struct clam_option __clam_options[] = {
     {"SelfCheck", NULL, 0, CLOPT_TYPE_NUMBER, MATCH_NUMBER, 600, NULL, 0, OPT_CLAMD, "This option specifies the time intervals (in seconds) in which clamd\nshould perform a database check.", "600"},
 
     {"ConcurrentDatabaseReload", NULL, 0, CLOPT_TYPE_BOOL, MATCH_BOOL, 1, NULL, 0, OPT_CLAMD, "Enable non-blocking (multi-threaded/concurrent) database reloads. This feature \nwill temporarily load a second scanning engine while scanning continues using \nthe first engine. Once loaded, the new engine takes over. The old engine is \nremoved as soon as all scans using the old engine have completed. This feature \nrequires more RAM, so this option is provided in case users are willing to \nblock scans during reload in exchange for lower RAM requirements.", "yes"},
+
+    {"OnDemandDatabase", NULL, 0, CLOPT_TYPE_BOOL, MATCH_BOOL, 0, NULL, 0, OPT_CLAMD, "Load the virus database when a scan is requested and unload it after an idle period. This reduces idle memory use at the cost of latency on the first scan.", "no"},
+
+    {"DatabaseKeepAlive", NULL, 0, CLOPT_TYPE_STRING, MATCH_DURATION, -1, "5m", 0, OPT_CLAMD, "How long an on-demand virus database remains loaded after the last scan. The value must use an s, m, or h suffix.", "5m"},
 
     {"DisableCache", "disable-cache", 0, CLOPT_TYPE_BOOL, MATCH_BOOL, 0, NULL, 0, OPT_CLAMD | OPT_CLAMSCAN, "This option allows you to disable clamd's caching feature.", "no"},
 

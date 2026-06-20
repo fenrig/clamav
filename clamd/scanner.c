@@ -228,14 +228,15 @@ cl_error_t scan_callback(STATBUF *sb, char *filename, const char *msg, enum cli_
     if (type == TYPE_MULTISCAN) {
         client_conn_t *client_conn = (client_conn_t *)calloc(1, sizeof(struct client_conn_tag));
         if (client_conn) {
-            client_conn->scanfd   = -1;
-            client_conn->sd       = scandata->odesc;
-            client_conn->filename = filename;
-            client_conn->cmdtype  = COMMAND_MULTISCANFILE;
-            client_conn->term     = scandata->conn->term;
-            client_conn->options  = scandata->options;
-            client_conn->opts     = scandata->opts;
-            client_conn->group    = scandata->group;
+            client_conn->scanfd         = -1;
+            client_conn->sd             = scandata->odesc;
+            client_conn->filename       = filename;
+            client_conn->cmdtype        = COMMAND_MULTISCANFILE;
+            client_conn->term           = scandata->conn->term;
+            client_conn->options        = scandata->options;
+            client_conn->opts           = scandata->opts;
+            client_conn->group          = scandata->group;
+            client_conn->managed_engine = 0;
             if (cl_engine_addref(scandata->engine)) {
                 logg(LOGG_ERROR, "cl_engine_addref() failed\n");
                 free(filename);

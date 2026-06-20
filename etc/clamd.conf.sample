@@ -256,6 +256,18 @@ Example
 # Default: yes
 #ConcurrentDatabaseReload no
 
+# Load the virus database only when a scan is requested. The database is
+# unloaded after DatabaseKeepAlive has elapsed with no active scans.
+# This reduces clamd's idle memory use at the cost of first-scan latency.
+# Default: no
+#OnDemandDatabase yes
+
+# How long to keep an on-demand database resident after the last scan.
+# Supported suffixes are seconds (s), minutes (m), and hours (h).
+# This option only applies when OnDemandDatabase is enabled.
+# Default: 5m
+#DatabaseKeepAlive 5m
+
 # Execute a command when virus is found.
 # Use the following environment variables to identify the file and virus names:
 # - $CLAM_VIRUSEVENT_FILENAME

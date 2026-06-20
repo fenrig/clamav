@@ -249,6 +249,7 @@ cl_error_t scan_callback(STATBUF *sb, char *filename, const char *msg, enum cli_
             client_conn->options = scandata->options;
             client_conn->opts    = scandata->opts;
             client_conn->group   = scandata->group;
+            client_conn->managed_engine = 0;
             if (cl_engine_addref(scandata->engine)) {
                 logg(LOGG_ERROR, "cl_engine_addref() failed\n");
                 free(client_conn->filename);

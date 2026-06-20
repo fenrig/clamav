@@ -289,6 +289,16 @@ Enable non-blocking (multi-threaded/concurrent) database reloads. This feature w
 .br
 Default: yes
 .TP
+\fBOnDemandDatabase BOOL\fR
+Load the virus database when a scan is requested and unload it after an idle period. This reduces idle memory use at the cost of latency on the first scan.
+.br
+Default: no
+.TP
+\fBDatabaseKeepAlive DURATION\fR
+How long an on-demand virus database remains loaded after the last scan. The value must use a seconds (s), minutes (m), or hours (h) suffix. This option only applies when OnDemandDatabase is enabled.
+.br
+Default: 5m
+.TP
 \fBVirusEvent COMMAND\fR
 Execute a command when virus is found.
 Use the following environment variables to identify the file and virus names:

@@ -1642,10 +1642,7 @@ int recvloop(int *socketds, unsigned nsockets, struct cl_engine *engine, unsigne
         /* signal that we can accept more connections */
         if (fds->nfds <= (unsigned)max_queue)
             pthread_cond_signal(&acceptdata.cond_nfds);
-        new_sd = fds_poll_recv(fds,
-                               engine_manager_enabled() ? 1 : (selfchk ? (int)selfchk : -1),
-                               1, event_wake_recv);
-        engine_manager_maybe_unload_idle();
+        new_sd = fds_poll_recv(fds, selfchk ? (int)selfchk : -1, 1, event_wake_recv);
 #ifdef _WIN32
         ResetEvent(event_wake_recv);
 #else

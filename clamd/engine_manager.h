@@ -18,7 +18,6 @@ bool engine_manager_enabled(void);
 struct cl_engine *engine_manager_get(cl_error_t *status);
 void engine_manager_release(struct cl_engine *engine);
 void engine_manager_mark_stale(void);
-void engine_manager_maybe_unload_idle(void);
 void engine_manager_shutdown(void);
 
 #endif

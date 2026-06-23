@@ -389,6 +389,12 @@ if(ENABLE_APP)
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         set_property(TEST sigtool_valgrind PROPERTY ENVIRONMENT ${ENVIRONMENT} VALGRIND=${Valgrind_EXECUTABLE})
     endif()
+
+    if(ENABLE_CLAMONACC)
+        add_test(NAME clamonacc_download COMMAND ${PythonTest_COMMAND};clamonacc_download_test.py
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_property(TEST clamonacc_download PROPERTY ENVIRONMENT ${ENVIRONMENT})
+    endif()
 endif()
 
 if(ENABLE_EXAMPLES)

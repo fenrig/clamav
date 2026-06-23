@@ -16,6 +16,8 @@ target_sources( clamonacc
         client/protocol.h
         client/socket.c
         client/socket.h
+        download/inotif.c
+        download/inotif.h
         fanotif/fanotif.c
         fanotif/fanotif.h
         inotif/inotif.c

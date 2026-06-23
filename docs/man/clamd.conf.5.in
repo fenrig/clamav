@@ -883,6 +883,23 @@ Requires the  DDD system to kick-off extra scans.
 .br
 Default: no
 .TP
+\fBOnAccessDownloadPath STRING\fR
+Specifies a browser download directory to watch for completed files. This option can be used multiple times. clamonacc uses inotify finalization events for this mode and scans files after close-after-write or move/rename into place.
+.br
+Default: disabled
+.TP
+\fBOnAccessDownloadIgnoreExtension STRING\fR
+Specifies a temporary download suffix to ignore under OnAccessDownloadPath, such as .part, .crdownload, or .tmp. This option can be used multiple times. Values must start with a dot and must not contain a slash.
+.br
+Default: disabled
+.TP
+\fBOnAccessDownloadScanOnFinalize BOOL\fR
+Enables completed-download scanning for OnAccessDownloadPath directories. This is intended for browser download directories where Firefox, Chrome, and similar clients write incomplete temporary files before renaming them to the final filename.
+.br
+Security note: this mode scans after a download is finalized. It is not equivalent to fanotify blocking on-access scanning and does not prevent a process from opening the completed file before clamonacc receives a verdict.
+.br
+Default: no
+.TP
 \fBDisableCertCheck BOOL\fR
 Disable authenticode certificate chain verification in PE files.
 .br

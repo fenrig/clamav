@@ -54,11 +54,13 @@
 
 #include "clamonacc.h"
 #include "client/client.h"
+#include "download/inotif.h"
 #include "fanotif/fanotif.h"
 #include "inotif/inotif.h"
 #include "scan/onas_queue.h"
 
 pthread_t ddd_pid        = 0;
+pthread_t download_pid   = 0;
 pthread_t scan_queue_pid = 0;
 
 static void onas_handle_signals(void);
@@ -85,6 +87,13 @@ static void onas_clamonacc_exit(int sig)
         pthread_join(ddd_pid, NULL);
     }
     ddd_pid = 0;
+
+    mprintf(LOGG_DEBUG, "Clamonacc: attempting to stop download watcher thread ... \n");
+    if (download_pid > 0) {
+        pthread_cancel(download_pid);
+        pthread_join(download_pid, NULL);
+    }
+    download_pid = 0;
 
     mprintf(LOGG_DEBUG, "Clamonacc: attempting to stop event consumer thread ...\n");
     if (scan_queue_pid > 0) {
@@ -208,20 +217,22 @@ int main(int argc, char **argv)
     }
 
 #if defined(HAVE_SYS_FANOTIFY_H)
-    /* Setup fanotify */
-    switch (onas_setup_fanotif(&ctx)) {
-        case CL_SUCCESS:
-            break;
-        case CL_BREAK:
-            ret = 0;
-            goto done;
-            break;
-        case CL_EARG:
-        default:
-            mprintf(LOGG_ERROR, "Clamonacc: can't setup fanotify\n");
-            ret = 2;
-            goto done;
-            break;
+    if (ctx->fanotify_enabled) {
+        /* Setup fanotify */
+        switch (onas_setup_fanotif(&ctx)) {
+            case CL_SUCCESS:
+                break;
+            case CL_BREAK:
+                ret = 0;
+                goto done;
+                break;
+            case CL_EARG:
+            default:
+                mprintf(LOGG_ERROR, "Clamonacc: can't setup fanotify\n");
+                ret = 2;
+                goto done;
+                break;
+        }
     }
 
     if (ctx->ddd_enabled) {
@@ -241,8 +252,22 @@ int main(int argc, char **argv)
                 break;
         }
     }
+
+    if (ctx->download_enabled) {
+        switch (onas_enable_download_watcher(&ctx)) {
+            case CL_SUCCESS:
+            case CL_BREAK:
+                break;
+            case CL_EARG:
+            default:
+                mprintf(LOGG_ERROR, "Clamonacc: can't setup download watcher\n");
+                ret = 2;
+                goto done;
+                break;
+        }
+    }
 #else
-    mprintf(LOGG_ERROR, "Clamonacc: currently, this application only runs on linux systems with fanotify enabled\n");
+    mprintf(LOGG_ERROR, "Clamonacc: currently, this application only runs on linux systems with fanotify/inotify enabled\n");
     goto done;
 #endif
 
@@ -324,7 +349,13 @@ int onas_start_eloop(struct onas_context **ctx)
     }
 
 #if defined(HAVE_SYS_FANOTIFY_H)
-    ret = onas_fan_eloop(ctx);
+    if ((*ctx)->fanotify_enabled) {
+        ret = onas_fan_eloop(ctx);
+    } else {
+        while (1) {
+            pause();
+        }
+    }
 #endif
 
     return ret;
@@ -346,11 +377,47 @@ static int startup_checks(struct onas_context *ctx)
 
 #if defined(HAVE_SYS_FANOTIFY_H)
 #if defined(_GNU_SOURCE)
-    ctx->fan_fd = fanotify_init(FAN_CLASS_CONTENT | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS, O_LARGEFILE | O_RDONLY);
+    if (optget(ctx->clamdopts, "OnAccessIncludePath")->enabled ||
+        optget(ctx->clamdopts, "OnAccessMountPath")->enabled ||
+        optget(ctx->opts, "watch-list")->enabled) {
+        ctx->fanotify_enabled = 1;
+    }
+
+    if (optget(ctx->clamdopts, "OnAccessDownloadScanOnFinalize")->enabled &&
+        optget(ctx->clamdopts, "OnAccessDownloadPath")->enabled) {
+        ctx->download_enabled = 1;
+    }
+
+    if (!ctx->fanotify_enabled && !ctx->download_enabled) {
+        logg(LOGG_ERROR, "Clamonacc: please specify at least one OnAccessIncludePath, OnAccessMountPath, or OnAccessDownloadPath with OnAccessDownloadScanOnFinalize enabled\n");
+        ret = 2;
+        goto done;
+    }
+
+    if (ctx->fanotify_enabled)
+        ctx->fan_fd = fanotify_init(FAN_CLASS_CONTENT | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS, O_LARGEFILE | O_RDONLY);
 #else
-    ctx->fan_fd = fanotify_init(FAN_CLASS_CONTENT | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS, O_RDONLY);
+    if (optget(ctx->clamdopts, "OnAccessIncludePath")->enabled ||
+        optget(ctx->clamdopts, "OnAccessMountPath")->enabled ||
+        optget(ctx->opts, "watch-list")->enabled) {
+        ctx->fanotify_enabled = 1;
+    }
+
+    if (optget(ctx->clamdopts, "OnAccessDownloadScanOnFinalize")->enabled &&
+        optget(ctx->clamdopts, "OnAccessDownloadPath")->enabled) {
+        ctx->download_enabled = 1;
+    }
+
+    if (!ctx->fanotify_enabled && !ctx->download_enabled) {
+        logg(LOGG_ERROR, "Clamonacc: please specify at least one OnAccessIncludePath, OnAccessMountPath, or OnAccessDownloadPath with OnAccessDownloadScanOnFinalize enabled\n");
+        ret = 2;
+        goto done;
+    }
+
+    if (ctx->fanotify_enabled)
+        ctx->fan_fd = fanotify_init(FAN_CLASS_CONTENT | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS, O_RDONLY);
 #endif
-    if (ctx->fan_fd < 0) {
+    if (ctx->fanotify_enabled && ctx->fan_fd < 0) {
         logg(LOGG_ERROR, "Clamonacc: fanotify_init failed: %s\n", cli_strerror(errno, faerr, sizeof(faerr)));
         if (errno == EPERM) {
             logg(LOGG_ERROR, "Clamonacc: clamonacc must have elevated permissions ... exiting ...\n");
@@ -359,6 +426,29 @@ static int startup_checks(struct onas_context *ctx)
         goto done;
     }
 #endif
+
+    if (ctx->download_enabled) {
+        const struct optstruct *pt;
+        STATBUF sb;
+
+        for (pt = optget(ctx->clamdopts, "OnAccessDownloadPath"); pt && pt->enabled; pt = (struct optstruct *)pt->nextarg) {
+            if (CLAMSTAT(pt->strarg, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+                logg(LOGG_ERROR, "Clamonacc: invalid OnAccessDownloadPath '%s': must be an existing directory\n", pt->strarg);
+                ret = 2;
+                goto done;
+            }
+        }
+
+        for (pt = optget(ctx->clamdopts, "OnAccessDownloadIgnoreExtension"); pt && pt->enabled; pt = (struct optstruct *)pt->nextarg) {
+            if (pt->strarg[0] != '.' || pt->strarg[1] == '\0' || strchr(pt->strarg, '/')) {
+                logg(LOGG_ERROR, "Clamonacc: invalid OnAccessDownloadIgnoreExtension '%s': extension must start with '.' and contain no '/'\n", pt->strarg);
+                ret = 2;
+                goto done;
+            }
+        }
+    } else if (optget(ctx->clamdopts, "OnAccessDownloadPath")->enabled) {
+        logg(LOGG_INFO, "Clamonacc: OnAccessDownloadPath configured but OnAccessDownloadScanOnFinalize is disabled\n");
+    }
 
 #if ((LIBCURL_VERSION_MAJOR < 7) || (LIBCURL_VERSION_MAJOR == 7 && LIBCURL_VERSION_MINOR < 40))
     if (optget(ctx->opts, "fdpass")->enabled || !optget(ctx->clamdopts, "TCPSocket")->enabled || !optget(ctx->clamdopts, "TCPAddr")->enabled) {
@@ -469,7 +559,9 @@ void onas_cleanup(struct onas_context *ctx)
 
 void onas_context_cleanup(struct onas_context *ctx)
 {
-    close(ctx->fan_fd);
+    if (ctx->fan_fd > 0) {
+        close(ctx->fan_fd);
+    }
     optfree((struct optstruct *)ctx->opts);
     optfree((struct optstruct *)ctx->clamdopts);
     ctx->opts      = NULL;

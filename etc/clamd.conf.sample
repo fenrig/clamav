@@ -825,6 +825,17 @@ Example
 # Default: no
 #OnAccessExtraScanning yes
 
+# Watch browser download directories for completed files. Temporary files using
+# configured suffixes are ignored, and the final file is scanned after a
+# close-after-write or move/rename into place. This mode uses inotify and is
+# post-download scanning; it is not equivalent to fanotify blocking/prevention.
+# Default: disabled
+#OnAccessDownloadPath /home/user/Downloads
+#OnAccessDownloadIgnoreExtension .part
+#OnAccessDownloadIgnoreExtension .crdownload
+#OnAccessDownloadIgnoreExtension .tmp
+#OnAccessDownloadScanOnFinalize yes
+
 # Set the  mount point to be scanned. The mount point specified, or the mount
 # point containing the specified directory will be watched. If any directories
 # are specified, this option will preempt (disable and ignore all options

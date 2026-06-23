@@ -51,6 +51,8 @@ struct onas_context {
     uint32_t ddd_enabled;
 
     int fan_fd;
+    uint8_t download_enabled;
+    uint8_t fanotify_enabled;
     uint64_t fan_mask;
     uint8_t retry_on_error;
     uint8_t retry_attempts;

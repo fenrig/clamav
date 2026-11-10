@@ -1,0 +1,9 @@
+{
+  "name": "org.clamav.thunderbird",
+  "description": "ClamAV Thunderbird attachment scanner",
+  "path": "@CMAKE_INSTALL_FULL_LIBEXECDIR@/clamav/clamav-thunderbird-host",
+  "type": "stdio",
+  "allowed_extensions": [
+    "clamav-thunderbird@clamav.net"
+  ]
+}

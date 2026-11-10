@@ -1,0 +1,41 @@
+{
+  "manifest_version": 2,
+  "name": "ClamAV attachment scanner",
+  "description": "Scan Thunderbird attachments for viruses with ClamAV.",
+  "version": "1.0.5",
+  "icons": {
+    "16": "logo.svg",
+    "32": "logo.svg",
+    "48": "logo.svg"
+  },
+  "applications": {
+    "gecko": {
+      "id": "clamav-thunderbird@clamav.net",
+      "strict_min_version": "123.0"
+    }
+  },
+  "permissions": [
+    "menus",
+    "messagesRead",
+    "messagesModify",
+    "messagesMove",
+    "messagesDelete",
+    "messagesModifyPermanent",
+    "messagesTags",
+    "messagesTagsList",
+    "messagesUpdate",
+    "downloads",
+    "nativeMessaging",
+    "notifications",
+    "tabs",
+    "storage",
+    "accountsRead"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

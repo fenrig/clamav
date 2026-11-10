@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ClamAV Thunderbird settings</title></head>
+<body>
+  <h1>ClamAV Thunderbird settings</h1>
+  <p>Automatic scanning is enabled by default and can be configured per mail account.</p>
+  <label>Mail account <select id="account"></select></label>
+  <p><label><input id="autoScan" type="checkbox"> Scan attachments automatically when new mail arrives</label></p>
+  <p><label><input id="diagnosticLogging" type="checkbox"> Enable diagnostic scan logging in the Error Console</label></p>
+  <h2>Scan result cache</h2>
+  <p>Only positive detections are cached by SHA-256; clean and failed scans are never cached.</p>
+  <p><label>Maximum entries <input id="maxEntries" type="number" min="0" step="1"></label></p>
+  <p><label>Maximum age (days) <input id="maxAgeDays" type="number" min="0" step="1"></label></p>
+  <button id="save">Save settings</button> <span id="status"></span>
+  <script src="options.js"></script>
+</body>
+</html>

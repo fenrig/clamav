@@ -1,0 +1,72 @@
+#clamav-virus-warning {
+  box-sizing: border-box;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border: 2px solid #9f1239;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #4c0519;
+  font: 600 14px sans-serif;
+  line-height: 1.45;
+}
+
+#clamav-virus-warning strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 16px;
+}
+
+#clamav-virus-warning.clamav-phishing-warning {
+  border-color: #c2410c;
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+#clamav-rescan-attachments {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 360px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid #9f1239;
+  border-radius: 4px;
+  background: #9f1239;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+#clamav-delete-attachments,
+#clamav-delete-message {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 360px;
+  margin: 8px 0 0;
+  padding: 4px 10px;
+  border: 1px solid #7f1d1d;
+  border-radius: 4px;
+  background: #fff;
+  color: #7f1d1d;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+#clamav-delete-message {
+  background: #7f1d1d;
+  color: white;
+}
+
+#clamav-delete-attachments:disabled,
+#clamav-delete-message:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+#clamav-rescan-attachments:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}

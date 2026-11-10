@@ -122,6 +122,10 @@ option(ENABLE_SYSTEMD
     "Install systemd service files if systemd is found."
     ${ENABLE_SYSTEMD_DEFAULT})
 
+option(ENABLE_THUNDERBIRD
+    "Enable the Thunderbird attachment-scanning integration."
+    ${ENABLE_THUNDERBIRD_DEFAULT})
+
 # For reference determining target platform:
 #  Rust Targets:  https://doc.rust-lang.org/nightly/rustc/platform-support.html
 option(RUST_COMPILER_TARGET

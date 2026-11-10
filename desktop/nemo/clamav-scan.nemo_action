@@ -1,0 +1,7 @@
+[Nemo Action]
+Name=Scan for viruses with ClamAV
+Comment=Scan the selected files or folders for malware
+Exec=clamav-scan %F
+Icon-Name=security-high
+Selection=any
+Extensions=any;

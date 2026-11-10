@@ -1,0 +1,202 @@
+#!/bin/sh
+# Scan files selected in Dolphin and show the result in a desktop dialog.
+
+set -u
+
+if [ "$#" -eq 0 ]; then
+    exit 2
+fi
+
+case "${XDG_CURRENT_DESKTOP:-}" in
+    *KDE*|*Plasma*)
+        preferred_dialog=kdialog
+        fallback_dialog=zenity
+        ;;
+    *)
+        preferred_dialog=zenity
+        fallback_dialog=kdialog
+        ;;
+esac
+
+if command -v "$preferred_dialog" >/dev/null 2>&1; then
+    dialog=$preferred_dialog
+elif command -v "$fallback_dialog" >/dev/null 2>&1; then
+    dialog=$fallback_dialog
+else
+    dialog=
+fi
+
+result_file=$(mktemp "${TMPDIR:-/tmp}/clamav-scan.XXXXXX") || exit 1
+scan_pid=
+progress_pid=
+progress_ref=
+qdbus=
+dbus_send=
+cancelled=false
+animation_step=0
+animation_value=0
+
+set_progress_value() {
+    if [ -n "$progress_ref" ] && [ -n "$dbus_send" ]; then
+        "$dbus_send" --session --reply-timeout=100 --dest="$progress_ref" \
+            /ProgressDialog org.freedesktop.DBus.Properties.Set \
+            string:org.kde.kdialog.ProgressDialog string:value variant:int32:"$1" \
+            >/dev/null 2>&1 || true
+    fi
+}
+
+stop_scan() {
+    if [ -n "$scan_pid" ] && kill -0 "$scan_pid" >/dev/null 2>&1; then
+        kill -TERM "$scan_pid" >/dev/null 2>&1 || true
+        sleep 1
+        kill -KILL "$scan_pid" >/dev/null 2>&1 || true
+    fi
+}
+
+close_progress() {
+    if [ -n "$progress_ref" ] && [ -n "$qdbus" ]; then
+        "$qdbus" "$progress_ref" /ProgressDialog close >/dev/null 2>&1 || true
+    fi
+    if [ -n "$progress_pid" ]; then
+        kill "$progress_pid" >/dev/null 2>&1 || true
+        wait "$progress_pid" 2>/dev/null || true
+    fi
+}
+
+cleanup() {
+    stop_scan
+    close_progress
+    rm -f "$result_file"
+}
+
+trap 'cleanup' EXIT
+trap 'cancelled=true; stop_scan; exit 130' HUP INT TERM
+
+scanner=clamscan
+scanner_is_daemon=false
+if command -v clamdscan >/dev/null 2>&1 && clamdscan --ping 1 >/dev/null 2>&1; then
+    scanner=clamdscan
+    scanner_is_daemon=true
+fi
+
+# Prefer the compiled Qt interface on KDE. The shell/KDialog implementation
+# remains the fallback on systems built without Qt6.
+if [ "$dialog" = kdialog ] && command -v clamav-scan-gui >/dev/null 2>&1; then
+    rm -f "$result_file"
+    exec clamav-scan-gui --scanner "$scanner" "$@"
+fi
+
+# Keep paths as separate arguments.  In particular, do not use `sh -c` or
+# word splitting here: filenames selected in Dolphin are user-controlled.
+if [ "$scanner_is_daemon" = true ]; then
+    "$scanner" --multiscan --infected "$@" >"$result_file" 2>&1 &
+else
+    "$scanner" --infected "$@" >"$result_file" 2>&1 &
+fi
+scan_pid=$!
+
+# KDialog exposes a D-Bus cancellation method. Zenity's Cancel button is
+# handled by its exit status.
+if [ "$dialog" = kdialog ]; then
+    if command -v qdbus6 >/dev/null 2>&1; then
+        qdbus=qdbus6
+    elif command -v qdbus >/dev/null 2>&1; then
+        qdbus=qdbus
+    fi
+    if [ -n "$qdbus" ]; then
+        if command -v dbus-send >/dev/null 2>&1; then
+            dbus_send=dbus-send
+        fi
+        progress_ref=$(kdialog --title "🛡️ ClamAV virus scan" --progressbar "🔍 Scanning selected items…" 100 2>/dev/null || true)
+        if [ -n "$progress_ref" ]; then
+            "$qdbus" "$progress_ref" /ProgressDialog showCancelButton true >/dev/null 2>&1 || true
+        fi
+    fi
+elif [ "$dialog" = zenity ]; then
+    zenity --progress --title="ClamAV" --text="Scanning selected items…" \
+        --pulsate --cancel >/dev/null 2>&1 &
+    progress_pid=$!
+fi
+
+scan_status=0
+while kill -0 "$scan_pid" >/dev/null 2>&1; do
+    if [ -n "$progress_ref" ]; then
+        if [ "$($qdbus "$progress_ref" /ProgressDialog wasCancelled 2>/dev/null || true)" = "true" ]; then
+            cancelled=true
+            "$qdbus" "$progress_ref" /ProgressDialog setLabelText "⏳ Cancelling scan…" >/dev/null 2>&1 || true
+            stop_scan
+            break
+        fi
+        case "$animation_step" in
+            0) animation_text="🔍 Scanning selected items.   " ;;
+            1) animation_text="🔍 Scanning selected items..  " ;;
+            2) animation_text="🔍 Scanning selected items... " ;;
+            *) animation_text="🔍 Scanning selected items...." ;;
+        esac
+        "$qdbus" "$progress_ref" /ProgressDialog setLabelText "$animation_text" >/dev/null 2>&1 || true
+        set_progress_value "$animation_value"
+        animation_value=$(( (animation_value + 5) % 101 ))
+        animation_step=$(( (animation_step + 1) % 4 ))
+    elif [ -n "$progress_pid" ] && ! kill -0 "$progress_pid" >/dev/null 2>&1; then
+        cancelled=true
+        stop_scan
+        break
+    fi
+    sleep 0.2
+done
+
+wait "$scan_pid" 2>/dev/null || scan_status=$?
+if [ "$cancelled" = true ]; then
+    scan_status=130
+fi
+
+case "$scan_status" in
+    130)
+        summary="The scan was cancelled."
+        ;;
+    0)
+        summary="No threats found."
+        ;;
+    1)
+        summary="Threats were identified."
+        ;;
+    *)
+        summary="The scan could not be completed."
+        ;;
+esac
+
+if [ "$dialog" = kdialog ] && [ -n "$progress_ref" ] && [ -n "$qdbus" ]; then
+    summary_text=$(printf '%s\n\nScanner: %s\n\nThe scan is complete. Close this window when finished.' "$summary" "$scanner")
+    set_progress_value 100
+    "$qdbus" "$progress_ref" /ProgressDialog setLabelText "$summary_text" >/dev/null 2>&1 || true
+    while :; do
+        dialog_state=$($qdbus "$progress_ref" /ProgressDialog wasCancelled 2>/dev/null || true)
+        [ "$dialog_state" = true ] && break
+        [ -z "$dialog_state" ] && break
+        sleep 0.2
+    done
+    close_progress
+elif [ "$dialog" = kdialog ]; then
+    close_progress
+    if [ "$cancelled" = true ]; then
+        kdialog --title "ClamAV scan" --msgbox "$summary" >/dev/null 2>&1
+    else
+        kdialog --title "ClamAV scan" --msgbox "$summary\n\nScanner: $scanner\n\nThe detailed result will open next." \
+            >/dev/null 2>&1
+        kdialog --title "ClamAV scan details" --textbox "$result_file" 760 460 >/dev/null 2>&1
+    fi
+elif [ "$dialog" = zenity ]; then
+    close_progress
+    zenity --info --title="ClamAV scan" --text="$summary" >/dev/null 2>&1 || true
+    if [ "$cancelled" != true ]; then
+        zenity --text-info --title="ClamAV scan details" --filename="$result_file" \
+            --width=760 --height=460 >/dev/null 2>&1 || true
+    fi
+elif command -v notify-send >/dev/null 2>&1; then
+    close_progress
+    notify-send --app-name=ClamAV "ClamAV scan" "$summary"
+else
+    close_progress
+fi
+
+exit "$scan_status"

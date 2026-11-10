@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+Name=ClamAV removable media scan
+X-KDE-Solid-Predicate=[ IS StorageVolume AND StorageVolume.isMounted == true AND StorageDrive.isRemovable == true ]
+Actions=scan;
+
+[Desktop Action scan]
+Name=Scan removable media for viruses
+Icon=clamav
+Exec=clamav-scan %f

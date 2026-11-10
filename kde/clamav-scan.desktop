@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Service
+Name=ClamAV
+Icon=clamav
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=all/all;inode/directory;
+Actions=scan;
+
+[Desktop Action scan]
+Name=Scan for viruses with ClamAV
+Icon=clamav
+Exec=clamav-scan %F

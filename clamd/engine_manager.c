@@ -235,6 +235,15 @@ bool engine_manager_enabled(void)
     return manager.initialized;
 }
 
+bool engine_manager_database_loaded(void)
+{
+    bool loaded;
+    pthread_mutex_lock(&manager.mutex);
+    loaded = manager.initialized && manager.engine != NULL && !manager.loading && !manager.unloading;
+    pthread_mutex_unlock(&manager.mutex);
+    return loaded;
+}
+
 struct cl_engine *engine_manager_get(cl_error_t *status)
 {
     struct cl_engine *old_engine;

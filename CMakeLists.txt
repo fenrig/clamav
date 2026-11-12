@@ -1223,6 +1223,8 @@ ${b}        Build milter:       ${e}${ENABLE_MILTER}  (toggle with -DENABLE_MILT
 if(C_LINUX)
 message("\
 ${b}        Build clamonacc:    ${e}${ENABLE_CLAMONACC}  (toggle with -DENABLE_CLAMONACC=ON/OFF)")
+message("\
+${b}        Build KDE KCM:      ${e}${ENABLE_KDE_KCM}  (requires Qt6 and KDE Frameworks 6)")
 endif()
 endif()
 

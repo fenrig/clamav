@@ -1059,6 +1059,23 @@ class TC(testcase.TestCase):
         self.start_clamd(clamd_config=clamd_config)
         testfile = TC.path_build / 'unit_tests' / 'input' / 'clamav_hdb_scanfiles' / 'clam.exe'
 
+        if operating_system != 'windows':
+            stats_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            stats_socket.settimeout(2)
+            stats_socket.connect(str(TC.clamd_socket))
+            stats_socket.sendall(b'nSTATS\n')
+            stats_chunks = []
+            while True:
+                chunk = stats_socket.recv(4096)
+                if not chunk:
+                    break
+                stats_chunks.append(chunk)
+                if b'\nEND\n' in b''.join(stats_chunks):
+                    break
+            stats = b''.join(stats_chunks).decode(errors='replace')
+            stats_socket.close()
+            assert 'DATABASE: on-demand loaded no' in stats
+
         output = self.execute_command('{clamdscan} -p 5 -c {clamd_config}'.format(
             clamdscan=TC.clamdscan, clamd_config=clamd_config))
         assert output.ec == 0

@@ -73,7 +73,8 @@ if(ENABLE_APP)
         PRIVATE
             check_clamd.c
             checks.h
-            ../clamd/thrmgr.c)
+            ../clamd/thrmgr.c
+            ../clamd/engine_manager.c)
     target_link_libraries(check_clamd
         PRIVATE
             ClamAV::libclamav

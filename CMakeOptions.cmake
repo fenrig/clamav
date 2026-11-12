@@ -122,6 +122,10 @@ option(ENABLE_SYSTEMD
     "Install systemd service files if systemd is found."
     ${ENABLE_SYSTEMD_DEFAULT})
 
+option(ENABLE_KDE_KCM
+    "Build and install the Plasma ClamAV configuration module when KDE Frameworks 6 is available."
+    ON)
+
 option(ENABLE_THUNDERBIRD
     "Enable the Thunderbird attachment-scanning integration."
     ${ENABLE_THUNDERBIRD_DEFAULT})

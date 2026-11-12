@@ -15,6 +15,7 @@ cl_error_t engine_manager_init(const struct cl_engine *template_engine,
                                unsigned int dboptions,
                                time_t keepalive_seconds);
 bool engine_manager_enabled(void);
+bool engine_manager_database_loaded(void);
 struct cl_engine *engine_manager_get(cl_error_t *status);
 void engine_manager_release(struct cl_engine *engine);
 void engine_manager_mark_stale(void);

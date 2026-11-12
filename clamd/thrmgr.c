@@ -43,6 +43,7 @@
 #include "thrmgr.h"
 #include "clamd_others.h"
 #include "server.h"
+#include "engine_manager.h"
 
 #ifdef HAVE_MALLINFO
 #include <malloc.h>
@@ -581,6 +582,10 @@ unlock:
         status = stats_buffer_append(response,
                                      "MEMSTATS: heap N/A mmap N/A used N/A free N/A releasable N/A pools %u pools_used %.3fM pools_total %.3fM\n",
                                      pool_cnt, pool_used / (1024 * 1024.0), pool_total / (1024 * 1024.0));
+
+    if (CL_SUCCESS == status && engine_manager_enabled())
+        status = stats_buffer_append(response, "DATABASE: on-demand loaded %s\n",
+                                     engine_manager_database_loaded() ? "yes" : "no");
 
 done:
     if (CL_SUCCESS != status)

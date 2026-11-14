@@ -12,6 +12,25 @@ if(Qt6_FOUND)
     target_link_libraries(clamav-scan-gui PRIVATE
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
     install(TARGETS clamav-scan-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
+
+    add_executable(clamav-quarantine-gui clamav-quarantine-gui.cpp)
+    target_link_libraries(clamav-quarantine-gui PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets clamav-quarantine)
+    install(TARGETS clamav-quarantine-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
+
+    add_executable(clamav-scan-quarantine clamav-scan-quarantine.c)
+    target_link_libraries(clamav-scan-quarantine PRIVATE
+        clamav-quarantine JSONC::jsonc OpenSSL::Crypto)
+    target_compile_options(clamav-scan-quarantine PRIVATE -D_GNU_SOURCE)
+    set_target_properties(clamav-scan-quarantine PROPERTIES
+        COMPILE_FLAGS "${WARNCFLAGS}")
+    install(TARGETS clamav-scan-quarantine RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
+    install(
+        FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/clamav-quarantine.desktop
+        DESTINATION
+            ${CMAKE_INSTALL_DATADIR}/applications
+        COMPONENT programs)
 else()
     message(STATUS "Native ClamAV scan GUI disabled: Qt6 Core/Gui/Widgets/Network are required")
 endif()
@@ -35,14 +54,12 @@ install(
     DESTINATION
         ${CMAKE_INSTALL_DATADIR}/kio/servicemenus
     COMPONENT programs)
-
 install(
     FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/clamav-scan-removable.desktop
     DESTINATION
         ${CMAKE_INSTALL_DATADIR}/solid/actions
     COMPONENT programs)
-
 install(
     FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/clamav.svg
@@ -50,3 +67,4 @@ install(
         ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
     RENAME clamav.svg
     COMPONENT programs)
+# End of KDE integration targets.

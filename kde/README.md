@@ -18,6 +18,14 @@ statistics, and CPU/disk-I/O cards with the platform Qt/Breeze styling. The
 `clamav-scan` launcher prefers it when available and retains its shell/KDialog
 fallback for builds without Qt 6.
 
+Dolphin also provides a separate “Scan and quarantine” action. It uses the same
+direct ClamD Unix-socket scanner as the browser integrations and moves infected
+regular files into the current user's secure quarantine store. Directory
+selections are scanned recursively; directories and clean files are never moved.
+The removable-media service menu uses the same action, while quarantine data
+always remains on the local user's data volume rather than on the removable
+device.
+
 The on-demand database state is reported by clamd through an additional
 `DATABASE:` line in its `STATS` response. Older daemons remain supported; the
 KCM simply reports the extended state as unavailable.

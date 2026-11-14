@@ -1,6 +1,55 @@
 /* global messenger */
 
 const NATIVE_HOST = "org.clamav.thunderbird";
+let nativePort = null;
+let nativeCurrent = null;
+const nativeQueue = [];
+
+function pumpNativeQueue() {
+  if (nativeCurrent || nativeQueue.length === 0) return;
+  if (!nativePort) {
+    try {
+      nativePort = messenger.runtime.connectNative(NATIVE_HOST);
+    } catch (error) {
+      nativeQueue.shift().reject(error);
+      pumpNativeQueue();
+      return;
+    }
+    nativePort.onMessage.addListener((message) => {
+      if (!nativeCurrent) return;
+      const request = nativeCurrent;
+      nativeCurrent = null;
+      request.resolve(message);
+      pumpNativeQueue();
+    });
+    nativePort.onDisconnect.addListener(() => {
+      const error = messenger.runtime.lastError?.message || "ClamAV native host disconnected";
+      const request = nativeCurrent;
+      nativeCurrent = null;
+      nativePort = null;
+      if (request) request.reject(new Error(error));
+      pumpNativeQueue();
+    });
+  }
+  nativeCurrent = nativeQueue.shift();
+  try {
+    nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine });
+  } catch (error) {
+    const request = nativeCurrent;
+    nativeCurrent = null;
+    nativePort = null;
+    request.reject(error);
+    pumpNativeQueue();
+  }
+}
+
+function scanWithNativeHost(path, quarantine = false) {
+  return new Promise((resolve, reject) => {
+    nativeQueue.push({ path, quarantine, resolve, reject });
+    pumpNativeQueue();
+  });
+}
+
 const MENU_ID = "clamav-scan-attachment";
 const FORCE_MENU_ID = "clamav-force-scan-attachment";
 const MESSAGE_MENU_ID = "clamav-scan-message-attachments";
@@ -421,7 +470,7 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
         conflictAction: "uniquify"
       });
       const download = await waitForDownload(downloadId);
-      const scan = await messenger.runtime.sendNativeMessage(NATIVE_HOST, { path: download.filename });
+      const scan = await scanWithNativeHost(download.filename);
       if (!scan || scan.success === false) throw new Error(scan?.message || "ClamAV could not complete the scan");
       await saveResult(hash, scan);
       if (scan.infected) {
@@ -560,7 +609,7 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
     objectUrl = URL.createObjectURL(file);
     downloadId = await messenger.downloads.download({ url: objectUrl, filename: `clamav-scan/${safeFilename(attachment.name)}`, saveAs: false, conflictAction: "uniquify" });
     const download = await waitForDownload(downloadId);
-    const result = await messenger.runtime.sendNativeMessage(NATIVE_HOST, { path: download.filename });
+    const result = await scanWithNativeHost(download.filename, true);
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }

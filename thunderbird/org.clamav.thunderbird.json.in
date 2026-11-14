@@ -4,6 +4,7 @@
   "path": "@CMAKE_INSTALL_FULL_LIBEXECDIR@/clamav/clamav-thunderbird-host",
   "type": "stdio",
   "allowed_extensions": [
-    "clamav-thunderbird@clamav.net"
+    "clamav-thunderbird@clamav.net",
+    "clamav-firefox@clamav.net"
   ]
 }

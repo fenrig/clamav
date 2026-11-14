@@ -36,6 +36,17 @@ Thunderbird is closed during a scan, abandoned temporary scan files are cleaned
 up the next time the extension starts.
 Temporary scan files are removed after each scan, including failed scans and
 virus detections. Abandoned files are also cleaned when the extension starts.
+When an attachment is infected, its temporary scan copy is moved to the same
+per-user ClamAV quarantine used by Firefox; the original message is not changed
+unless the user chooses one of the message or attachment deletion actions.
+
+The native host is a persistent C program connection. Thunderbird uses
+`connectNative()` and serializes scan requests through one native-host process
+per Thunderbird background context. On Linux the host opens the attachment and passes
+the file descriptor directly to `clamd` using the Unix-socket `FILDES` protocol;
+it falls back to `clamscan` if the daemon socket is unavailable. The default
+Arch Linux socket is `/run/clamav/clamd.ctl`. Set `CLAMAV_CLAMD_SOCKET` when a
+different socket path is configured.
 
 The options page controls automatic scanning per Thunderbird account. The SHA-256 result cache has configurable maximum age and
 entry count, defaulting to 180 days or 1,000 entries. Only positive detections

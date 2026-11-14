@@ -2,9 +2,14 @@
 Type=Service
 Name=ClamAV removable media scan
 X-KDE-Solid-Predicate=[ IS StorageVolume AND StorageVolume.isMounted == true AND StorageDrive.isRemovable == true ]
-Actions=scan;
+Actions=scan;scan-quarantine;
 
 [Desktop Action scan]
 Name=Scan removable media for viruses
 Icon=clamav
 Exec=clamav-scan %f
+
+[Desktop Action scan-quarantine]
+Name=Scan and quarantine removable media
+Icon=clamav
+Exec=clamav-scan-quarantine %f

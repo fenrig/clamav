@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ClamAV Quarantine
+Comment=Manage files quarantined by ClamAV
+Exec=clamav-quarantine-gui
+Icon=clamav
+Terminal=false
+Categories=System;Security;

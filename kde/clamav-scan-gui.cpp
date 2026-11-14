@@ -15,6 +15,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QTextEdit>
 #include <QTextCursor>
 #include <QTimer>
@@ -149,8 +150,8 @@ Stats queryStats(QString &socketPath)
 class ScanDialog final : public QDialog
 {
 public:
-    ScanDialog(const QString &scanner, const QStringList &paths)
-        : scanner_(scanner), paths_(paths), started_(std::chrono::steady_clock::now())
+    ScanDialog(const QString &scanner, const QStringList &paths, bool quarantine)
+        : scanner_(scanner), paths_(paths), quarantine_(quarantine), started_(std::chrono::steady_clock::now())
     {
         setWindowTitle(tr("ClamAV virus scan"));
         setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
@@ -198,19 +199,21 @@ public:
         connect(process_, &QProcess::readyReadStandardError, this, [this] { readOutput(); });
         connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) { scanFinished(code); });
-        QStringList arguments = {QStringLiteral("--infected")};
-        if (QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
+        QStringList arguments;
+        if (!quarantine_)
+            arguments << QStringLiteral("--infected");
+        if (!quarantine_ && QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
             arguments.prepend(QStringLiteral("--multiscan"));
         arguments += paths_;
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
-        if (QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
+        if (!quarantine_ && QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
             if (const auto daemon = clamdPids(); !daemon.isEmpty())
                 pids_ = daemon, cpuTarget_ = tr("ClamAV daemon");
 
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
         metricsTimer_.start(500);
-        if (QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan")) {
+        if (!quarantine_ && QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan")) {
             connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
             statsTimer_.start(1000);
             updateQueue();
@@ -403,6 +406,7 @@ private:
 
     QString scanner_;
     QStringList paths_;
+    bool quarantine_ = false;
     QString socketPath_;
     QString cpuTarget_ = tr("Scanner");
     QString statusText_;
@@ -436,13 +440,21 @@ int main(int argc, char **argv)
     QCommandLineParser parser;
     parser.addHelpOption();
     QCommandLineOption scannerOption(QStringLiteral("scanner"), QStringLiteral("Scanner executable"), QStringLiteral("scanner"));
+    QCommandLineOption quarantineOption(QStringLiteral("quarantine"), QStringLiteral("Scan and quarantine infected files"));
     parser.addOption(scannerOption);
+    parser.addOption(quarantineOption);
     parser.addPositionalArgument(QStringLiteral("path"), QStringLiteral("Files or directories to scan"));
     parser.process(app);
     const QStringList paths = parser.positionalArguments();
-    if (!parser.isSet(scannerOption) || paths.isEmpty())
+    if ((!parser.isSet(scannerOption) && !parser.isSet(quarantineOption)) || paths.isEmpty())
         return 2;
-    ScanDialog dialog(parser.value(scannerOption), paths);
+    QString scanner = parser.value(scannerOption);
+    if (parser.isSet(quarantineOption)) {
+        scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
+        if (scanner.isEmpty())
+            return 2;
+    }
+    ScanDialog dialog(scanner, paths, parser.isSet(quarantineOption));
     dialog.exec();
     return dialog.resultCode();
 }

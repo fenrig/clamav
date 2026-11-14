@@ -12,4 +12,4 @@ Exec=clamav-scan %f
 [Desktop Action scan-quarantine]
 Name=Scan and quarantine removable media
 Icon=clamav
-Exec=clamav-scan-quarantine %f
+Exec=clamav-scan-gui --quarantine %f

@@ -14,4 +14,4 @@ Exec=clamav-scan %F
 [Desktop Action scan-quarantine]
 Name=Scan and quarantine with ClamAV
 Icon=clamav
-Exec=clamav-scan-quarantine %F
+Exec=clamav-scan-gui --quarantine %F

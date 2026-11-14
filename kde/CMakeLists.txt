@@ -18,13 +18,13 @@ if(Qt6_FOUND)
         Qt6::Core Qt6::Gui Qt6::Widgets clamav-quarantine)
     install(TARGETS clamav-quarantine-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
 
-    add_executable(clamav-scan-quarantine clamav-scan-quarantine.c)
-    target_link_libraries(clamav-scan-quarantine PRIVATE
+    add_executable(clamav-scan-quarantine-helper clamav-scan-quarantine.c)
+    target_link_libraries(clamav-scan-quarantine-helper PRIVATE
         clamav-quarantine JSONC::jsonc OpenSSL::Crypto)
-    target_compile_options(clamav-scan-quarantine PRIVATE -D_GNU_SOURCE)
-    set_target_properties(clamav-scan-quarantine PROPERTIES
+    target_compile_options(clamav-scan-quarantine-helper PRIVATE -D_GNU_SOURCE)
+    set_target_properties(clamav-scan-quarantine-helper PROPERTIES
         COMPILE_FLAGS "${WARNCFLAGS}")
-    install(TARGETS clamav-scan-quarantine RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
+    install(TARGETS clamav-scan-quarantine-helper RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
     install(
         FILES
             ${CMAKE_CURRENT_SOURCE_DIR}/clamav-quarantine.desktop

@@ -14,7 +14,7 @@ set(THUNDERBIRD_EXTENSION_DIR
     "${CMAKE_INSTALL_LIBDIR}/thunderbird/extensions"
     CACHE PATH "System Thunderbird extension directory")
 set(FIREFOX_EXTENSION_DIR
-    "${CMAKE_INSTALL_LIBDIR}/firefox/extensions"
+    "${CMAKE_INSTALL_LIBDIR}/firefox/browser/extensions"
     CACHE PATH "System Firefox extension directory")
 set(CLAMAV_THUNDERBIRD_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/manifest.json

@@ -261,6 +261,10 @@ public:
         healthBanner->setObjectName(QStringLiteral("healthBanner"));
         auto *healthLayout = new QHBoxLayout(healthBanner);
         healthLayout->setContentsMargins(16, 12, 16, 12);
+        healthIcon = new QLabel(healthBanner);
+        healthIcon->setFixedSize(32, 32);
+        healthIcon->setAlignment(Qt::AlignCenter);
+        healthLayout->addWidget(healthIcon);
         auto *healthText = new QVBoxLayout;
         healthTitle = new QLabel(healthBanner);
         healthTitle->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600; color: palette(window-text);"));
@@ -514,7 +518,7 @@ public:
 
 private:
     QFrame *healthBanner;
-    QLabel *healthTitle, *healthDetails;
+    QLabel *healthIcon, *healthTitle, *healthDetails;
     QPushButton *healthAction;
     int healthActionType = 0;
     QFrame *engineCard, *updatesCard, *databaseCard, *onAccessCard, *quarantineCard;
@@ -604,6 +608,10 @@ private:
         card->setStyleSheet(QStringLiteral(
             "QFrame#overviewCard { background: rgba(%1, %2, %3, 42); border: 1px solid rgba(%1, %2, %3, 150); border-radius: 8px; }")
             .arg(color.red()).arg(color.green()).arg(color.blue()));
+    }
+    void setHealthIcon(const QString &name)
+    {
+        healthIcon->setPixmap(QIcon::fromTheme(name).pixmap(28, 28));
     }
     void startDaemon()
     {
@@ -733,12 +741,14 @@ private:
 
         healthAction->setVisible(true);
         if (!daemonRunning) {
+            setHealthIcon(QStringLiteral("dialog-error"));
             healthTitle->setText(i18n("Attention needed"));
             healthDetails->setText(i18n("The ClamAV scanning service is not running. Enable and start it to scan files."));
             healthAction->setText(i18n("Start ClamAV"));
             healthActionType = 1;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
         } else if (!databaseReady || !freshclamInitialized) {
+            setHealthIcon(QStringLiteral("dialog-error"));
             healthTitle->setText(i18n("Database setup needed"));
             healthDetails->setText(!freshclamInitialized
                 ? i18n("ClamAV is running, but FreshClam has not been initialized. Set up database updates before relying on current protection.")
@@ -747,12 +757,14 @@ private:
             healthActionType = 2;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
         } else if (onAccessConfigured && !onAccessRunning) {
+            setHealthIcon(QStringLiteral("dialog-error"));
             healthTitle->setText(i18n("On-access protection needs attention"));
             healthDetails->setText(i18n("On-access prevention is enabled in ClamAV configuration, but its service is not running."));
             healthAction->setText(i18n("Start protection"));
             healthActionType = 3;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
         } else if (quarantineReview > 0 || !updatesRunning) {
+            setHealthIcon(QStringLiteral("dialog-warning"));
             healthTitle->setText(i18n("Protection is running"));
             if (quarantineReview > 0) {
                 const QString reviewText = quarantineSerious > 0
@@ -774,6 +786,7 @@ private:
             healthAction->setVisible(true);
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
         } else {
+            setHealthIcon(QStringLiteral("emblem-ok"));
             healthTitle->setText(i18n("ClamAV is operating normally"));
             healthDetails->setText(i18n("The antivirus service is running, the virus database is available, and automatic updates are active."));
             healthAction->setVisible(false);

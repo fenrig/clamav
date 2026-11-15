@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QRegularExpression>
 #include <QFrame>
 #include <QSplitter>
@@ -33,7 +34,7 @@ static QString localDescription(const QString &detection)
     const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
     if (name.startsWith(QStringLiteral("Eicar-Signature"), Qt::CaseInsensitive)
             || name.startsWith(QStringLiteral("Eicar-Test-Signature"), Qt::CaseInsensitive))
-        return QObject::tr("This is the standard harmless EICAR antivirus test file, not a real infection.");
+        return QObject::tr("This is the standard harmless EICAR antivirus test file, not a real infection. It can be safely deleted; it is only used to verify that antivirus protection is working.");
     if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
             || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
         return QObject::tr("ClamAV classified this as a potentially unwanted application. It may be unwanted or unsafe, but is not necessarily malware.");
@@ -47,6 +48,34 @@ static QString localDescription(const QString &detection)
             || name.contains(QStringLiteral("Worm"), Qt::CaseInsensitive))
         return QObject::tr("The detection name identifies this as a virus or worm signature associated with malicious code.");
     return QObject::tr("ClamAV reported a signature match. Use the web-search or VirusTotal buttons for more context; these results are informational and may be incomplete.");
+}
+
+static int threatLevel(const QString &detection)
+{
+    const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
+    if (name.startsWith(QStringLiteral("Eicar"), Qt::CaseInsensitive))
+        return 1;
+    if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
+        return 2;
+    if (name.startsWith(QStringLiteral("Phishing."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("Heuristics."), Qt::CaseInsensitive))
+        return 3;
+    return 4;
+}
+
+static QString threatLabel(const QString &detection)
+{
+    switch (threatLevel(detection)) {
+    case 1:
+        return QObject::tr("Test signature — harmless");
+    case 2:
+        return QObject::tr("Potentially unwanted");
+    case 3:
+        return QObject::tr("Suspicious content");
+    default:
+        return QObject::tr("Malware detection");
+    }
 }
 
 static QColor threatTint(const QString &detection)
@@ -102,6 +131,8 @@ public:
         hashLabel = new QLabel(this);
         createdLabel = new QLabel(this);
         descriptionLabel = new QLabel(this);
+        severityLabel = new QLabel(this);
+        severityMeter = new QProgressBar(this);
         details = new QTextEdit(this);
         refreshButton = new QPushButton(tr("Refresh"), this);
         restoreButton = new QPushButton(tr("Restore…"), this);
@@ -139,6 +170,10 @@ public:
         sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         hashLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         descriptionLabel->setWordWrap(true);
+        severityMeter->setRange(0, 4);
+        severityMeter->setTextVisible(false);
+        severityMeter->setFixedHeight(8);
+        severityMeter->setAccessibleName(tr("Threat level"));
 
         auto *detailWidget = new QWidget(this);
         auto *detailLayout = new QVBoxLayout(detailWidget);
@@ -164,6 +199,8 @@ public:
         auto *summaryTitle = new QLabel(tr("What this means"), summaryCard);
         summaryTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
         summaryLayout->addWidget(summaryTitle);
+        summaryLayout->addWidget(severityLabel);
+        summaryLayout->addWidget(severityMeter);
         summaryLayout->addWidget(descriptionLabel);
 
         auto *reportCard = new QFrame(detailContent);
@@ -339,6 +376,8 @@ private:
             hashLabel->clear();
             createdLabel->clear();
             descriptionLabel->clear();
+            severityLabel->clear();
+            severityMeter->setValue(0);
             details->clear();
             return;
         }
@@ -351,6 +390,16 @@ private:
         const auto created = item->data(Qt::UserRole + 5).toLongLong();
         createdLabel->setText(created > 0 ? QDateTime::fromSecsSinceEpoch(created).toString(Qt::TextDate) : tr("Unknown"));
         const QString report = item->data(Qt::UserRole + 1).toString();
+        const int level = threatLevel(report);
+        const QColor tint = threatTint(report);
+        severityLabel->setText(tr("Threat level: %1").arg(threatLabel(report)));
+        severityLabel->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
+            .arg(tint.red()).arg(tint.green()).arg(tint.blue()));
+        severityMeter->setValue(level);
+        severityMeter->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
+            "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
+            .arg(tint.red()).arg(tint.green()).arg(tint.blue()));
         descriptionLabel->setText(localDescription(report));
         details->setPlainText(report);
     }
@@ -486,6 +535,8 @@ private:
     QLabel *hashLabel;
     QLabel *createdLabel;
     QLabel *descriptionLabel;
+    QLabel *severityLabel;
+    QProgressBar *severityMeter;
     QTextEdit *details;
     QPushButton *virusTotalButton;
     QLabel *emptyState;

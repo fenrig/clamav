@@ -54,6 +54,29 @@ QString serviceEnabled(const QString &unit)
     return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
 }
 
+QString userServiceState(const QString &unit)
+{
+    QProcess process;
+    process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("is-active"), unit});
+    process.waitForFinished(2000);
+    return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+}
+
+QString userServiceEnabled(const QString &unit)
+{
+    QProcess process;
+    process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("is-enabled"), unit});
+    process.waitForFinished(2000);
+    return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+}
+
+bool userSystemctl(const QStringList &arguments)
+{
+    QProcess process;
+    process.start(QStringLiteral("systemctl"), QStringList{QStringLiteral("--user")} + arguments);
+    return process.waitForFinished(10000) && process.exitCode() == 0;
+}
+
 QString systemdProperty(const QString &unit, const QString &property)
 {
     QProcess process;
@@ -253,9 +276,12 @@ public:
         auto *scanningLayout = new QVBoxLayout(scanningPage);
         auto *updatesPage = new QWidget(tabs);
         auto *updatesLayout = new QVBoxLayout(updatesPage);
+        auto *quarantinePage = new QWidget(tabs);
+        auto *quarantineLayout = new QVBoxLayout(quarantinePage);
         tabs->addTab(overviewPage, QIcon::fromTheme(QStringLiteral("view-dashboard")), i18n("Overview"));
         tabs->addTab(scanningPage, QIcon::fromTheme(QStringLiteral("security-high")), i18n("Scanning"));
         tabs->addTab(updatesPage, QIcon::fromTheme(QStringLiteral("system-software-update")), i18n("Updates"));
+        tabs->addTab(quarantinePage, QIcon::fromTheme(QStringLiteral("clamav-quarantine")), i18n("Quarantine"));
         root->addWidget(tabs, 1);
 
         healthBanner = new QFrame(widget());
@@ -415,11 +441,9 @@ public:
         freshclamDelay->setPlaceholderText(i18n("For example: 1h or 15min"));
         updatesForm->addRow(i18n("Update schedule:"), freshclamSchedule);
         updatesForm->addRow(i18n("Randomized delay:"), freshclamDelay);
-        quarantineRetention = new QSpinBox(updates);
+        quarantineRetention = new QSpinBox(quarantinePage);
         quarantineRetention->setRange(0, 3650);
         quarantineRetention->setSuffix(i18n(" days (0 disables cleanup)"));
-        quarantineRetention->setToolTip(i18n("Older quarantined files are permanently removed when the quarantine is accessed or a new detection is stored."));
-        updatesForm->addRow(i18n("Quarantine retention:"), quarantineRetention);
         scanningLayout->addWidget(settings);
         auto *serviceControls = new QGroupBox(i18n("Advanced service controls"), scanningPage);
         auto *serviceLayout = new QGridLayout(serviceControls);
@@ -440,6 +464,35 @@ public:
         addAction(updateLayout, i18n("Disable automatic updates"), "disable", "clamav-freshclam-once.timer");
         updatesLayout->addWidget(updateControls);
         updatesLayout->addStretch();
+        auto *quarantineSettings = new QGroupBox(i18n("Automatic cleanup"), quarantinePage);
+        auto *quarantineForm = new QFormLayout(quarantineSettings);
+        auto *quarantineIntro = new QLabel(i18n("A user-level systemd timer removes quarantined files after the retention period. It runs once a day and catches up after the computer has been off."), quarantineSettings);
+        quarantineIntro->setWordWrap(true);
+        quarantineIntro->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+        quarantineForm->addRow(quarantineIntro);
+        quarantineTimerEnabled = new QCheckBox(i18n("Enable automatic quarantine cleanup"), quarantineSettings);
+        quarantineForm->addRow(quarantineTimerEnabled);
+        quarantineForm->addRow(i18n("Keep quarantined files for:"), quarantineRetention);
+        quarantineTimerStatus = new QLabel(quarantineSettings);
+        quarantineTimerStatus->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+        quarantineForm->addRow(i18n("Timer status:"), quarantineTimerStatus);
+        quarantineLayout->addWidget(quarantineSettings);
+        auto *quarantineControls = new QGroupBox(i18n("Quarantine manager"), quarantinePage);
+        auto *quarantineControlsLayout = new QGridLayout(quarantineControls);
+        auto *openQuarantineButton = new QPushButton(i18n("Open quarantine"), quarantineControls);
+        openQuarantineButton->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
+        connect(openQuarantineButton, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
+        quarantineControlsLayout->addWidget(openQuarantineButton, 0, 0);
+        auto *cleanupNow = new QPushButton(i18n("Run cleanup now"), quarantineControls);
+        cleanupNow->setIcon(QIcon::fromTheme(QStringLiteral("edit-clear")));
+        connect(cleanupNow, &QPushButton::clicked, this, [this] {
+            if (!userSystemctl({QStringLiteral("start"), QStringLiteral("clamav-quarantine-cleanup.service")}))
+                QMessageBox::warning(widget(), i18n("ClamAV"), i18n("The quarantine cleanup could not be started."));
+            refreshStatus();
+        });
+        quarantineControlsLayout->addWidget(cleanupNow, 0, 1);
+        quarantineLayout->addWidget(quarantineControls);
+        quarantineLayout->addStretch();
         connect(lazyLoading, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         connect(keepAlive, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(heuristicAlerts, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
@@ -448,6 +501,7 @@ public:
         connect(freshclamSchedule, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(freshclamDelay, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(quarantineRetention, qOverload<int>(&QSpinBox::valueChanged), this, &ClamavKCM::settingsChanged);
+        connect(quarantineTimerEnabled, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         configWatcher = new QFileSystemWatcher(this);
         if (QFile::exists(configFile()))
             configWatcher->addPath(configFile());
@@ -472,6 +526,7 @@ public:
         const QSignalBlocker blocker4(heuristicPrecedence);
         const QSignalBlocker blocker5(onAccessPrevention);
         const QSignalBlocker blocker6(quarantineRetention);
+        const QSignalBlocker blocker7(quarantineTimerEnabled);
         lazyLoading->setChecked(value(QStringLiteral("OnDemandDatabase")) == QStringLiteral("yes"));
         keepAlive->setText(value(QStringLiteral("DatabaseKeepAlive"), QStringLiteral("5m")));
         heuristicAlerts->setChecked(value(QStringLiteral("HeuristicAlerts"), QStringLiteral("yes")) != QStringLiteral("no"));
@@ -480,6 +535,9 @@ public:
         unsigned int retention = CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS;
         clamav_quarantine_get_retention_days(&retention);
         quarantineRetention->setValue(static_cast<int>(retention));
+        const QString quarantineTimerState = userServiceEnabled(QStringLiteral("clamav-quarantine-cleanup.timer"));
+        quarantineTimerEnabled->setChecked(quarantineTimerState != QStringLiteral("disabled")
+            && quarantineTimerState != QStringLiteral("masked"));
         loadPaths(values.value(QStringLiteral("OnAccessIncludePath")));
         loadTimerSettings();
         pendingChanges = false;
@@ -495,6 +553,18 @@ public:
             QMessageBox::warning(widget(), i18n("ClamAV"), i18n("The quarantine retention setting could not be saved."));
             return;
         }
+        const QString quarantineTimer = QStringLiteral("clamav-quarantine-cleanup.timer");
+        if (!userSystemctl({QStringLiteral("daemon-reload")})) {
+            QMessageBox::warning(widget(), i18n("ClamAV"), i18n("The user systemd manager could not be reloaded."));
+            return;
+        }
+        const QString timerAction = quarantineTimerEnabled->isChecked() ? QStringLiteral("enable") : QStringLiteral("disable");
+        if (!userSystemctl({timerAction, quarantineTimer}))
+            return;
+        if (quarantineTimerEnabled->isChecked())
+            userSystemctl({QStringLiteral("start"), quarantineTimer});
+        else
+            userSystemctl({QStringLiteral("stop"), quarantineTimer});
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("OnDemandDatabase"), boolValue(lazyLoading)})) return;
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("DatabaseKeepAlive"), keepAlive->text()})) return;
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("HeuristicAlerts"), boolValue(heuristicAlerts)})) return;
@@ -527,6 +597,7 @@ public:
         freshclamSchedule->setText(QStringLiteral("daily"));
         freshclamDelay->setText(QStringLiteral("1h"));
         quarantineRetention->setValue(CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS);
+        quarantineTimerEnabled->setChecked(true);
         setNeedsSave(true);
         pendingChanges = true;
         applyButton->setEnabled(true);
@@ -546,6 +617,8 @@ private:
     QLineEdit *keepAlive;
     QLineEdit *freshclamSchedule, *freshclamDelay;
     QSpinBox *quarantineRetention;
+    QCheckBox *quarantineTimerEnabled;
+    QLabel *quarantineTimerStatus;
     QWidget *pathEditor;
     QVBoxLayout *pathLayout;
     QList<QLineEdit *> pathEdits;
@@ -687,12 +760,15 @@ private:
         const QString freshclam = serviceState(QStringLiteral("clamav-freshclam.service"));
         const QString onAccess = serviceState(QStringLiteral("clamav-clamonacc.service"));
         const QString timer = serviceState(QStringLiteral("clamav-freshclam-once.timer"));
+        const QString quarantineTimer = userServiceState(QStringLiteral("clamav-quarantine-cleanup.timer"));
         clamdStatus->setText(daemon == QStringLiteral("active") ? i18n("Running") : i18n("Stopped"));
         freshclamStatus->setText(freshclam == QStringLiteral("active") ? i18n("Running") : i18n("Not running"));
         onAccessStatus->setText(onAccessPrevention->isChecked()
             ? (onAccess == QStringLiteral("active") ? i18n("Running") : i18n("Configured but stopped"))
             : i18n("Disabled (optional)"));
         timerStatus->setText(timer == QStringLiteral("active") ? i18n("Scheduled") : i18n("Not scheduled"));
+        quarantineTimerStatus->setText(quarantineTimer == QStringLiteral("active")
+            ? i18n("Enabled and scheduled") : i18n("Disabled or not running"));
         databaseStatus->setText(databaseAvailable()
             ? i18n("Available · updated %1", databaseUpdated())
             : i18n("Unavailable"));
@@ -710,9 +786,6 @@ private:
         size_t quarantineItems = 0;
         size_t quarantineReview = 0;
         size_t quarantineSerious = 0;
-        size_t expired = 0;
-        clamav_quarantine_cleanup_expired(&expired);
-        (void)expired;
         if (clamav_quarantine_path(quarantinePath) && clamav_quarantine_list(&entries, &quarantineItems))
         {
             for (size_t i = 0; i < quarantineItems; ++i) {

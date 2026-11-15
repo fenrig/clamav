@@ -18,9 +18,10 @@ restore, and deletion.
 Quarantined entries are retained for 30 days by default. The per-user setting
 is stored in `$XDG_CONFIG_HOME/clamav/quarantine.conf`, or
 `~/.config/clamav/quarantine.conf`, as `RetentionDays=N`. Set `N` to `0` to
-disable expiry. Expired payload and metadata pairs are removed when the store
-is accessed or a new detection is stored, and are recorded with an `expire`
-audit action.
+disable expiry. Expired payload and metadata pairs are removed by the per-user
+`clamav-quarantine-cleanup.timer` systemd timer. It runs daily, is persistent
+across downtime, and records removals with an `expire` audit action. The timer
+is disabled until enabled by the user or the Quarantine page in the Plasma KCM.
 
 Audit events are appended as JSON Lines to `$XDG_STATE_HOME/clamav/quarantine.log`,
 or `~/.local/state/clamav/quarantine.log`. Each record includes a Unix timestamp,

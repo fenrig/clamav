@@ -1,0 +1,6 @@
+[Unit]
+Description=Clean expired ClamAV quarantine entries
+
+[Service]
+Type=oneshot
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/clamav-quarantine-cleanup

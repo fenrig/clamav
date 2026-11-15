@@ -276,9 +276,6 @@ int clamav_quarantine_store(const char *source_path,
     int source;
     int destination;
     int success = 0;
-    size_t expired;
-
-    (void)clamav_quarantine_cleanup_expired(&expired);
     if (source_path == NULL || metadata == NULL || !clamav_quarantine_path(directory)
             || !random_id(id))
         return 0;

@@ -59,8 +59,8 @@ async function openQuarantine() {
   }
 }
 
-browser.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
-  if (buttonIndex === 0 && notificationId.startsWith("clamav-quarantine-")) {
+browser.notifications.onClicked.addListener((notificationId) => {
+  if (notificationId.startsWith("clamav-quarantine-")) {
     openQuarantine();
   }
 });
@@ -90,7 +90,7 @@ async function scanDownload(downloadId) {
     let notificationId = `clamav-download-${downloadId}`;
     if (result.infected && result.quarantined) {
       notificationId = `clamav-quarantine-${downloadId}`;
-      notification.buttons = [{ title: "Open quarantine" }];
+      notification.message += " Click this notification to open quarantine.";
     }
     await browser.notifications.create(notificationId, notification);
   } catch (error) {

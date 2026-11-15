@@ -3,9 +3,11 @@
 #include <QCommandLineParser>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QDir>
 #include <QFrame>
 #include <QCloseEvent>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
@@ -155,7 +157,8 @@ public:
     {
         setWindowTitle(tr("ClamAV virus scan"));
         setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
-        resize(820, 560);
+        resize(900, 620);
+        setMinimumSize(720, 500);
 
         auto *layout = new QVBoxLayout(this);
         auto *headingRow = new QHBoxLayout;
@@ -163,15 +166,21 @@ public:
         statusIcon_->setFixedSize(36, 36);
         setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar());
         headingRow->addWidget(statusIcon_);
-        auto *heading = new QLabel(tr("Scanning selected items"), this);
+        auto *heading = new QLabel(quarantine_ ? tr("Scanning and protecting with ClamAV")
+                                                : tr("Scanning with ClamAV"), this);
         heading->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
         headingRow->addWidget(heading);
         headingRow->addStretch();
         layout->addLayout(headingRow);
 
-        summary_ = new QLabel(tr("Scanning selected items…"), this);
-        summary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        summary_ = new QLabel(tr("Preparing scan…"), this);
+        summary_->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
         layout->addWidget(summary_);
+        targetSummary_ = new QLabel(this);
+        targetSummary_->setText(targetDescription());
+        targetSummary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        targetSummary_->setWordWrap(true);
+        layout->addWidget(targetSummary_);
 
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Measuring…"));
@@ -181,11 +190,18 @@ public:
 
         progress_ = new QProgressBar(this);
         progress_->setRange(0, 0);
+        progress_->setTextVisible(true);
+        progress_->setFormat(tr("Scanning…"));
         layout->addWidget(progress_);
-        output_ = new QTextEdit(this);
+        auto *activity = new QGroupBox(tr("Scan activity"), this);
+        auto *activityLayout = new QVBoxLayout(activity);
+        output_ = new QTextEdit(activity);
         output_->setReadOnly(true);
         output_->setLineWrapMode(QTextEdit::NoWrap);
-        layout->addWidget(output_, 1);
+        output_->setPlaceholderText(tr("Scanner output will appear here."));
+        output_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        activityLayout->addWidget(output_);
+        layout->addWidget(activity, 1);
 
         auto *buttons = new QHBoxLayout;
         buttons->addStretch();
@@ -223,11 +239,23 @@ public:
     }
 
 private:
+    QString targetDescription() const
+    {
+        QStringList names;
+        for (const QString &path : paths_)
+            names << QDir::toNativeSeparators(path);
+        if (names.size() > 3)
+            return tr("%1 targets · %2, %3, %4, and more")
+                .arg(names.size()).arg(names.at(0)).arg(names.at(1)).arg(names.at(2));
+        return tr("%1 target(s) · %2").arg(names.size()).arg(names.join(QStringLiteral(", ")));
+    }
+
     QLabel *addCard(QHBoxLayout *layout, const QString &title, const QString &value)
     {
         auto *card = new QFrame(this);
         card->setFrameShape(QFrame::StyledPanel);
-        card->setStyleSheet(QStringLiteral("QFrame { padding: 8px; border-radius: 8px; }"));
+        card->setStyleSheet(QStringLiteral(
+            "QFrame { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"));
         auto *cardLayout = new QVBoxLayout(card);
         auto *label = new QLabel(title, card);
         label->setStyleSheet(QStringLiteral("font-weight: 600;"));
@@ -373,12 +401,13 @@ private:
         resultCode_ = cancelled_ ? 130 : (exitCode == 0 ? 0 : exitCode == 1 ? 1 : (exitCode == 0 ? 1 : exitCode));
         progress_->setRange(0, 100);
         progress_->setValue(100);
+        progress_->setFormat(tr("Complete"));
         const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count();
         const QString summary = cancelled_ ? tr("The scan was cancelled.")
             : exitCode == 0 ? tr("No threats found.")
             : exitCode == 1 ? tr("Threats were identified.")
                             : tr("The scan could not be completed.");
-        statusText_ = tr("%1\nScanner: %2\nElapsed: %3 s").arg(summary, scanner_).arg(elapsed, 0, 'f', 1);
+        statusText_ = tr("Scanner: %1 · Elapsed: %2 s").arg(scanner_).arg(elapsed, 0, 'f', 1);
         if (cancelled_ || exitCode > 1) {
             setStatusIcon(QColor(QStringLiteral("#f39c12")), QChar('!'));
         } else if (exitCode == 1) {
@@ -387,6 +416,7 @@ private:
             setStatusIcon(QColor(QStringLiteral("#27ae60")), QChar(0x2713));
         }
         summary_->setText(summary);
+        targetSummary_->setText(statusText_);
         action_->setEnabled(true);
         action_->setText(tr("Close"));
         cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
@@ -417,6 +447,7 @@ private:
     QLabel *ioStatus_ = nullptr;
     QLabel *statusIcon_ = nullptr;
     QLabel *summary_ = nullptr;
+    QLabel *targetSummary_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QTextEdit *output_ = nullptr;
     QPushButton *action_ = nullptr;

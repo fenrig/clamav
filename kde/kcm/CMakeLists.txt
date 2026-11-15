@@ -22,7 +22,8 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.clamav.kcm.policy
 add_library(kcm_clamav MODULE kcm_clamav.cpp)
 target_link_libraries(kcm_clamav PRIVATE
     Qt6::Core Qt6::Widgets Qt6::DBus
-    KF6::ConfigWidgets KF6::I18n KF6::CoreAddons KF6::KCMUtils)
+    KF6::ConfigWidgets KF6::I18n KF6::CoreAddons KF6::KCMUtils
+    clamav-quarantine)
 target_compile_definitions(kcm_clamav PRIVATE
     CLAMAV_CONF_DIR="${CONFDIR}"
     CLAMAV_DATA_DIR="${DATADIR}"

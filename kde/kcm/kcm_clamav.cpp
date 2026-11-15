@@ -2,6 +2,8 @@
 #include <KCModule>
 #include <KPluginFactory>
 
+#include "quarantine.h"
+
 #include <QCheckBox>
 #include <QFile>
 #include <QFileSystemWatcher>
@@ -37,6 +39,14 @@ QString serviceState(const QString &unit)
 {
     QProcess process;
     process.start(QStringLiteral("systemctl"), {QStringLiteral("is-active"), unit});
+    process.waitForFinished(2000);
+    return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+}
+
+QString serviceEnabled(const QString &unit)
+{
+    QProcess process;
+    process.start(QStringLiteral("systemctl"), {QStringLiteral("is-enabled"), unit});
     process.waitForFinished(2000);
     return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
 }
@@ -108,6 +118,60 @@ QString databaseInfo()
     return i18n("%1 — %2", directory, descriptions.join(QStringLiteral(", ")));
 }
 
+QString databaseUpdated()
+{
+    QString directory = dataDir;
+    QFile input(configDir + QStringLiteral("/clamd.conf"));
+    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream stream(&input);
+        while (!stream.atEnd()) {
+            const QString line = stream.readLine().trimmed();
+            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
+                directory = line.section(QLatin1Char(' '), 1).trimmed();
+                break;
+            }
+        }
+    }
+    const QFileInfoList files = QDir(directory).entryInfoList(
+        {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
+        QDir::Files, QDir::Time);
+    return files.isEmpty() ? QString() : QLocale().toString(files.first().lastModified(), QLocale::ShortFormat);
+}
+
+bool databaseAvailable()
+{
+    QString directory = dataDir;
+    QFile input(configDir + QStringLiteral("/clamd.conf"));
+    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream stream(&input);
+        while (!stream.atEnd()) {
+            const QString line = stream.readLine().trimmed();
+            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
+                directory = line.section(QLatin1Char(' '), 1).trimmed();
+                break;
+            }
+        }
+    }
+    return !QDir(directory).entryInfoList(
+        {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
+        QDir::Files).isEmpty();
+}
+
+int quarantineLevel(const char *detection)
+{
+    const QString name = QString::fromLocal8Bit(detection).section('\n', 0, 0)
+        .section(QStringLiteral(": "), -1).trimmed();
+    if (name.startsWith(QStringLiteral("Eicar"), Qt::CaseInsensitive))
+        return 1;
+    if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
+        return 2;
+    if (name.startsWith(QStringLiteral("Phishing."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("Heuristics."), Qt::CaseInsensitive))
+        return 3;
+    return 4;
+}
+
 QHash<QString, QStringList> parseConfig(const QString &fileName)
 {
     QHash<QString, QStringList> values;
@@ -154,6 +218,47 @@ public:
         headerText->addWidget(subtitle);
         headerLayout->addLayout(headerText, 1);
         root->addWidget(header);
+
+        healthBanner = new QFrame(widget());
+        healthBanner->setObjectName(QStringLiteral("healthBanner"));
+        auto *healthLayout = new QVBoxLayout(healthBanner);
+        healthLayout->setContentsMargins(16, 12, 16, 12);
+        healthTitle = new QLabel(healthBanner);
+        healthTitle->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600;"));
+        healthDetails = new QLabel(healthBanner);
+        healthDetails->setWordWrap(true);
+        healthLayout->addWidget(healthTitle);
+        healthLayout->addWidget(healthDetails);
+        root->addWidget(healthBanner);
+
+        auto *overview = new QGridLayout;
+        overview->setHorizontalSpacing(10);
+        overview->setVerticalSpacing(10);
+        const auto addOverviewCard = [overview](const QString &title, int row, int column) {
+            auto *card = new QFrame;
+            card->setObjectName(QStringLiteral("overviewCard"));
+            auto *cardLayout = new QVBoxLayout(card);
+            cardLayout->setContentsMargins(14, 12, 14, 12);
+            auto *heading = new QLabel(title, card);
+            heading->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(mid);"));
+            auto *value = new QLabel(card);
+            value->setWordWrap(true);
+            value->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600;"));
+            cardLayout->addWidget(heading);
+            cardLayout->addWidget(value);
+            overview->addWidget(card, row, column);
+            return value;
+        };
+        engineOverview = addOverviewCard(i18n("Antivirus"), 0, 0);
+        updatesOverview = addOverviewCard(i18n("Database updates"), 0, 1);
+        databaseOverview = addOverviewCard(i18n("Virus database"), 0, 2);
+        onAccessOverview = addOverviewCard(i18n("On-access protection"), 1, 0);
+        quarantineOverview = addOverviewCard(i18n("Quarantine"), 1, 1);
+        auto *overviewSpacer = new QWidget(widget());
+        overviewSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        overview->addWidget(overviewSpacer, 1, 2);
+        root->addLayout(overview);
+
         auto *statusBox = new QGroupBox(i18n("Status"), widget());
         auto *status = new QFormLayout(statusBox);
         clamdStatus = new QLabel;
@@ -318,6 +423,9 @@ public:
     }
 
 private:
+    QFrame *healthBanner;
+    QLabel *healthTitle, *healthDetails;
+    QLabel *engineOverview, *updatesOverview, *databaseOverview, *onAccessOverview, *quarantineOverview;
     QLabel *clamdStatus, *freshclamStatus, *onAccessStatus, *timerStatus, *databaseStatus;
     QPlainTextEdit *stats;
     QCheckBox *lazyLoading, *heuristicAlerts, *heuristicPrecedence, *onAccessPrevention;
@@ -424,6 +532,77 @@ private:
         databaseStatus->setText(databaseInfo() + (response.isEmpty() ? QString() : QStringLiteral("; ") + response.trimmed()));
         const QString stat = clamdCommand("nSTATS\n");
         stats->setPlainText(stat.isEmpty() ? i18n("Clamd is not reachable") : stat.trimmed());
+
+        const QString daemon = clamdStatus->text();
+        const QString freshclam = freshclamStatus->text();
+        const QString timer = timerStatus->text();
+        const QString onAccess = onAccessStatus->text();
+        const bool daemonRunning = daemon == QStringLiteral("active");
+        const bool updatesRunning = freshclam == QStringLiteral("active") || timer == QStringLiteral("active");
+        const bool databaseReady = databaseAvailable();
+        const bool onAccessRunning = onAccess == QStringLiteral("active");
+        const bool onAccessConfigured = serviceEnabled(QStringLiteral("clamav-clamonacc.service")) == QStringLiteral("enabled");
+        char quarantinePath[PATH_MAX];
+        struct clamav_quarantine_entry *entries = nullptr;
+        size_t quarantineItems = 0;
+        size_t quarantineReview = 0;
+        size_t quarantineSerious = 0;
+        if (clamav_quarantine_path(quarantinePath) && clamav_quarantine_list(&entries, &quarantineItems))
+        {
+            for (size_t i = 0; i < quarantineItems; ++i) {
+                if (quarantineLevel(entries[i].detection) >= 2)
+                    ++quarantineReview;
+                if (quarantineLevel(entries[i].detection) >= 3)
+                    ++quarantineSerious;
+            }
+            clamav_quarantine_list_free(entries);
+        }
+
+        engineOverview->setText(daemonRunning ? i18n("Running") : i18n("Not running"));
+        updatesOverview->setText(updatesRunning ? i18n("Updating automatically") : i18n("Schedule inactive"));
+        databaseOverview->setText(databaseReady
+            ? i18n("Available\nUpdated %1", databaseUpdated())
+            : i18n("Unavailable"));
+        if (onAccessRunning)
+            onAccessOverview->setText(i18n("Enabled and running"));
+        else if (onAccessConfigured)
+            onAccessOverview->setText(i18n("Enabled, not running"));
+        else
+            onAccessOverview->setText(i18n("Disabled (optional)"));
+        if (quarantineReview > 0)
+            quarantineOverview->setText(i18np("%1 item to review", "%1 items to review", static_cast<int>(quarantineReview)));
+        else if (quarantineItems > 0)
+            quarantineOverview->setText(i18n("Test signatures only"));
+        else
+            quarantineOverview->setText(i18n("No items to review"));
+
+        if (!daemonRunning || !databaseReady) {
+            healthTitle->setText(i18n("Attention needed"));
+            healthDetails->setText(!daemonRunning
+                ? i18n("The ClamAV scanning service is not running. Start it from Quick actions or check the service configuration.")
+                : i18n("The virus database is unavailable. Update the database before relying on scans."));
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
+        } else if (quarantineReview > 0 || !onAccessRunning) {
+            healthTitle->setText(i18n("Protection is running"));
+            if (quarantineReview > 0) {
+                const QString reviewText = quarantineSerious > 0
+                    ? i18n("Some quarantined detections may be serious.")
+                    : i18n("Potentially unwanted items are quarantined.");
+                healthDetails->setText(i18n("ClamAV is available. %1 On-access protection is %2.", reviewText,
+                                            onAccessRunning ? i18n("enabled") : i18n("not enabled")));
+            } else {
+                healthDetails->setText(i18n("ClamAV is available. On-access protection is disabled, which is optional but provides less automatic protection."));
+            }
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
+        } else if (!updatesRunning) {
+            healthTitle->setText(i18n("Protection is running"));
+            healthDetails->setText(i18n("Scanning is available, but automatic virus database updates are not active."));
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
+        } else {
+            healthTitle->setText(i18n("ClamAV is operating normally"));
+            healthDetails->setText(i18n("The antivirus service is running, the virus database is available, and automatic updates are active."));
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
+        }
     }
 };
 

@@ -67,4 +67,10 @@ install(
         ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
     RENAME clamav.svg
     COMPONENT programs)
+install(
+    FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/clamav-quarantine.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+    RENAME clamav-quarantine.svg
+    COMPONENT programs)
 # End of KDE integration targets.

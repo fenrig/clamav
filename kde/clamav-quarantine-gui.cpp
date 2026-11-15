@@ -624,7 +624,8 @@ int main(int argc, char **argv)
     QApplication application(argc, argv);
     application.setDesktopFileName(QStringLiteral("clamav-quarantine"));
     QuarantineWindow window;
-    window.setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
+    window.setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav-quarantine"),
+                                          QIcon::fromTheme(QStringLiteral("clamav"))));
     window.show();
     return application.exec();
 }

@@ -13,6 +13,7 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSplitter>
@@ -42,6 +43,25 @@ static QString localDescription(const QString &detection)
     return QObject::tr("ClamAV reported a signature match. Use the web-search or VirusTotal buttons for more context; these results are informational and may be incomplete.");
 }
 
+class DeselectableTableWidget final : public QTableWidget
+{
+public:
+    using QTableWidget::QTableWidget;
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        const QModelIndex index = indexAt(event->position().toPoint());
+        if (!index.isValid() || selectionModel()->isSelected(index)) {
+            clearSelection();
+            setCurrentItem(nullptr);
+            event->accept();
+            return;
+        }
+        QTableWidget::mousePressEvent(event);
+    }
+};
+
 class QuarantineWindow final : public QMainWindow
 {
 public:
@@ -52,7 +72,7 @@ public:
         auto *toolbar = new QHBoxLayout;
         auto *listToolbar = new QHBoxLayout;
         pathLabel = new QLabel(this);
-        table = new QTableWidget(this);
+        table = new DeselectableTableWidget(this);
         searchBox = new QLineEdit(this);
         searchBox->setPlaceholderText(tr("Search detections, filenames, or components…"));
         componentLabel = new QLabel(tr("Select an item"), this);

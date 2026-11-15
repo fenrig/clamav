@@ -1,0 +1,110 @@
+:root {
+  color-scheme: light dark;
+  font: message-box;
+}
+
+body {
+  margin: 0;
+  color: CanvasText;
+  background: Canvas;
+}
+
+main {
+  max-width: 680px;
+  margin: 32px auto;
+  padding: 0 24px;
+}
+
+header {
+  margin-bottom: 24px;
+}
+
+h1 {
+  font-size: 1.6em;
+  margin: 0 0 8px;
+}
+
+h2 {
+  font-size: 1.15em;
+  margin: 0 0 8px;
+}
+
+p {
+  line-height: 1.45;
+}
+
+.muted {
+  color: GrayText;
+}
+
+.card {
+  margin: 14px 0;
+  padding: 18px;
+  border: 1px solid ButtonBorder;
+  border-radius: 8px;
+  background: Field;
+  color: FieldText;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.field:first-of-type {
+  justify-content: space-between;
+}
+
+select,
+input[type="number"] {
+  min-width: 180px;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  color: FieldText;
+  background: Field;
+  border: 1px solid ButtonBorder;
+  border-radius: 4px;
+}
+
+.check {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 14px 0;
+}
+
+.check input {
+  margin-top: 2px;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+button {
+  padding: 7px 16px;
+  color: ButtonText;
+  background: ButtonFace;
+  border: 1px solid ButtonBorder;
+  border-radius: 4px;
+}
+
+button:hover {
+  background: Highlight;
+  color: HighlightText;
+}
+
+#status {
+  color: GrayText;
+}
+
+@media (max-width: 560px) {
+  main { margin: 20px auto; padding: 0 14px; }
+  .field { align-items: flex-start; flex-direction: column; gap: 6px; }
+  select, input[type="number"] { min-width: 0; width: 100%; }
+}

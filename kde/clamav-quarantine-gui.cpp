@@ -143,6 +143,12 @@ public:
         deleteAllButton = new QPushButton(tr("Delete all permanently"), this);
         lookupButton = new QPushButton(tr("Look up detection"), this);
         virusTotalButton = new QPushButton(tr("Open VirusTotal"), this);
+        refreshButton->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
+        restoreButton->setIcon(QIcon::fromTheme(QStringLiteral("document-revert")));
+        deleteButton->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete")));
+        deleteAllButton->setIcon(QIcon::fromTheme(QStringLiteral("trash-empty")));
+        lookupButton->setIcon(QIcon::fromTheme(QStringLiteral("internet-web-browser")));
+        virusTotalButton->setIcon(QIcon::fromTheme(QStringLiteral("internet-services")));
 
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({tr("Original filename"), tr("Detected by"), tr("Date")});

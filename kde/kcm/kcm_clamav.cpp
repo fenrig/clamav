@@ -188,12 +188,15 @@ public:
         addAction(actionLayout, i18n("Enable daily updates"), "enable", "clamav-freshclam-once.timer");
         addAction(actionLayout, i18n("Disable daily updates"), "disable", "clamav-freshclam-once.timer");
         auto *quarantine = new QPushButton(i18n("Open quarantine"), actions);
+        quarantine->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
         connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
         addButton(actionLayout, quarantine);
         auto *refresh = new QPushButton(i18n("Refresh"), actions);
+        refresh->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
         connect(refresh, &QPushButton::clicked, this, &ClamavKCM::refreshStatus);
         addButton(actionLayout, refresh);
         applyButton = new QPushButton(i18n("Apply configuration"), actions);
+        applyButton->setIcon(QIcon::fromTheme(QStringLiteral("dialog-ok-apply")));
         applyButton->setEnabled(false);
         connect(applyButton, &QPushButton::clicked, this, &ClamavKCM::save);
         addButton(actionLayout, applyButton);

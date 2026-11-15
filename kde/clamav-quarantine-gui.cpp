@@ -7,6 +7,7 @@
 #include <QDesktopServices>
 #include <QFormLayout>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -17,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QFrame>
 #include <QSplitter>
 #include <QTextEdit>
 #include <QUrl>
@@ -106,6 +108,7 @@ public:
         virusTotalButton->setEnabled(false);
         details->setReadOnly(true);
         details->setMinimumHeight(140);
+        details->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         hashLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         descriptionLabel->setWordWrap(true);
@@ -113,7 +116,7 @@ public:
         auto *detailWidget = new QWidget(this);
         auto *detailLayout = new QVBoxLayout(detailWidget);
         auto *detailTitle = new QLabel(tr("Detection details"), detailWidget);
-        detailTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        detailTitle->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600; padding-bottom: 4px;"));
         auto *form = new QFormLayout;
         form->addRow(tr("Component:"), componentLabel);
         form->addRow(tr("Original name:"), originalLabel);
@@ -122,10 +125,24 @@ public:
         form->addRow(tr("Created:"), createdLabel);
         detailLayout->addWidget(detailTitle);
         detailLayout->addLayout(form);
-        detailLayout->addWidget(new QLabel(tr("Summary:"), detailWidget));
-        detailLayout->addWidget(descriptionLabel);
-        detailLayout->addWidget(new QLabel(tr("ClamAV report:"), detailWidget));
-        detailLayout->addWidget(details, 1);
+        auto *summaryCard = new QFrame(detailWidget);
+        summaryCard->setObjectName(QStringLiteral("summaryCard"));
+        auto *summaryLayout = new QVBoxLayout(summaryCard);
+        auto *summaryTitle = new QLabel(tr("What this means"), summaryCard);
+        summaryTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        summaryLayout->addWidget(summaryTitle);
+        summaryLayout->addWidget(descriptionLabel);
+
+        auto *reportCard = new QFrame(detailWidget);
+        reportCard->setObjectName(QStringLiteral("reportCard"));
+        auto *reportLayout = new QVBoxLayout(reportCard);
+        auto *reportTitle = new QLabel(tr("Technical ClamAV report"), reportCard);
+        reportTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        reportLayout->addWidget(reportTitle);
+        reportLayout->addWidget(details, 1);
+
+        detailLayout->addWidget(summaryCard);
+        detailLayout->addWidget(reportCard, 1);
 
         auto *splitter = new QSplitter(Qt::Horizontal, central);
         auto *listWidget = new QWidget(splitter);
@@ -154,6 +171,11 @@ public:
         setCentralWidget(central);
         setWindowTitle(tr("ClamAV Quarantine"));
         resize(1000, 500);
+        setStyleSheet(QStringLiteral(
+            "QFrame#summaryCard { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"
+            "QFrame#reportCard { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }"
+            "QFrame#summaryCard QLabel, QFrame#reportCard QLabel { border: none; }"
+            "QTextEdit { border: none; background: transparent; }"));
 
         connect(refreshButton, &QPushButton::clicked, this, &QuarantineWindow::refresh);
         connect(restoreButton, &QPushButton::clicked, this, &QuarantineWindow::restore);

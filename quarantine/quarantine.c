@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -21,6 +22,70 @@ static int make_directory(const char *path)
     if (errno != EEXIST || lstat(path, &status) != 0 || !S_ISDIR(status.st_mode))
         return 0;
     return status.st_uid == geteuid();
+}
+
+static int config_path(char path[PATH_MAX])
+{
+    const char *config_home = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    char base[PATH_MAX];
+    char clamav[PATH_MAX];
+
+    if (config_home != NULL && config_home[0] != '\0') {
+        if (snprintf(base, sizeof(base), "%s", config_home) >= (int)sizeof(base))
+            return 0;
+    } else if (home != NULL && home[0] != '\0') {
+        if (snprintf(base, sizeof(base), "%s/.config", home) >= (int)sizeof(base))
+            return 0;
+    } else {
+        return 0;
+    }
+    if (!make_directory(base)
+            || snprintf(clamav, sizeof(clamav), "%s/clamav", base) >= (int)sizeof(clamav)
+            || !make_directory(clamav)
+            || snprintf(path, PATH_MAX, "%s/quarantine.conf", clamav) >= PATH_MAX)
+        return 0;
+    return 1;
+}
+
+int clamav_quarantine_get_retention_days(unsigned int *days)
+{
+    char path[PATH_MAX];
+    FILE *input;
+    unsigned int value;
+
+    if (days == NULL)
+        return 0;
+    *days = CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS;
+    if (!config_path(path))
+        return 1;
+    input = fopen(path, "r");
+    if (input == NULL)
+        return 1;
+    if (fscanf(input, "RetentionDays=%u", &value) == 1 && value <= 3650U)
+        *days = value;
+    fclose(input);
+    return 1;
+}
+
+int clamav_quarantine_set_retention_days(unsigned int days)
+{
+    char path[PATH_MAX];
+    int fd;
+    char content[64];
+    int length;
+    ssize_t written;
+
+    if (days > 3650U || !config_path(path))
+        return 0;
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0)
+        return 0;
+    length = snprintf(content, sizeof(content), "RetentionDays=%u\n", days);
+    written = write(fd, content, (size_t)length);
+    fchmod(fd, 0600);
+    close(fd);
+    return written == length;
 }
 
 static int state_log_path(char path[PATH_MAX])
@@ -211,7 +276,9 @@ int clamav_quarantine_store(const char *source_path,
     int source;
     int destination;
     int success = 0;
+    size_t expired;
 
+    (void)clamav_quarantine_cleanup_expired(&expired);
     if (source_path == NULL || metadata == NULL || !clamav_quarantine_path(directory)
             || !random_id(id))
         return 0;
@@ -360,7 +427,7 @@ void clamav_quarantine_list_free(struct clamav_quarantine_entry *entries)
     free(entries);
 }
 
-int clamav_quarantine_delete(const char *id)
+static int delete_entry(const char *id, const char *action)
 {
     char payload[PATH_MAX];
     char metadata[PATH_MAX];
@@ -373,7 +440,41 @@ int clamav_quarantine_delete(const char *id)
          * gone and will be ignored by the next list operation. */
         return 0;
     }
-    clamav_quarantine_audit("delete", id, NULL, NULL, NULL, 1);
+    clamav_quarantine_audit(action, id, NULL, NULL, NULL, 1);
+    return 1;
+}
+
+int clamav_quarantine_delete(const char *id)
+{
+    return delete_entry(id, "delete");
+}
+
+int clamav_quarantine_cleanup_expired(size_t *deleted)
+{
+    struct clamav_quarantine_entry *entries = NULL;
+    size_t count = 0;
+    size_t removed = 0;
+    unsigned int retention_days;
+    time_t now = time(NULL);
+    size_t i;
+
+    if (deleted == NULL || !clamav_quarantine_get_retention_days(&retention_days))
+        return 0;
+    *deleted = 0;
+    if (retention_days == 0)
+        return 1;
+    if (!clamav_quarantine_list(&entries, &count))
+        return 0;
+    for (i = 0; i < count; ++i) {
+        const time_t created = (time_t)entries[i].created;
+        if (created <= 0 || created > now
+                || (uintmax_t)(now - created) < (uintmax_t)retention_days * 86400U)
+            continue;
+        if (delete_entry(entries[i].id, "expire"))
+            ++removed;
+    }
+    clamav_quarantine_list_free(entries);
+    *deleted = removed;
     return 1;
 }
 

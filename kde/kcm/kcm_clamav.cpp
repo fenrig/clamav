@@ -26,6 +26,7 @@
 #include <QToolButton>
 #include <QLocale>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTextStream>
 #include <QRegularExpression>
@@ -414,6 +415,11 @@ public:
         freshclamDelay->setPlaceholderText(i18n("For example: 1h or 15min"));
         updatesForm->addRow(i18n("Update schedule:"), freshclamSchedule);
         updatesForm->addRow(i18n("Randomized delay:"), freshclamDelay);
+        quarantineRetention = new QSpinBox(updates);
+        quarantineRetention->setRange(0, 3650);
+        quarantineRetention->setSuffix(i18n(" days (0 disables cleanup)"));
+        quarantineRetention->setToolTip(i18n("Older quarantined files are permanently removed when the quarantine is accessed or a new detection is stored."));
+        updatesForm->addRow(i18n("Quarantine retention:"), quarantineRetention);
         scanningLayout->addWidget(settings);
         auto *serviceControls = new QGroupBox(i18n("Advanced service controls"), scanningPage);
         auto *serviceLayout = new QGridLayout(serviceControls);
@@ -441,6 +447,7 @@ public:
         connect(onAccessPrevention, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         connect(freshclamSchedule, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(freshclamDelay, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
+        connect(quarantineRetention, qOverload<int>(&QSpinBox::valueChanged), this, &ClamavKCM::settingsChanged);
         configWatcher = new QFileSystemWatcher(this);
         if (QFile::exists(configFile()))
             configWatcher->addPath(configFile());
@@ -464,11 +471,15 @@ public:
         const QSignalBlocker blocker3(heuristicAlerts);
         const QSignalBlocker blocker4(heuristicPrecedence);
         const QSignalBlocker blocker5(onAccessPrevention);
+        const QSignalBlocker blocker6(quarantineRetention);
         lazyLoading->setChecked(value(QStringLiteral("OnDemandDatabase")) == QStringLiteral("yes"));
         keepAlive->setText(value(QStringLiteral("DatabaseKeepAlive"), QStringLiteral("5m")));
         heuristicAlerts->setChecked(value(QStringLiteral("HeuristicAlerts"), QStringLiteral("yes")) != QStringLiteral("no"));
         heuristicPrecedence->setChecked(value(QStringLiteral("HeuristicScanPrecedence")) == QStringLiteral("yes"));
         onAccessPrevention->setChecked(value(QStringLiteral("OnAccessPrevention")) == QStringLiteral("yes"));
+        unsigned int retention = CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS;
+        clamav_quarantine_get_retention_days(&retention);
+        quarantineRetention->setValue(static_cast<int>(retention));
         loadPaths(values.value(QStringLiteral("OnAccessIncludePath")));
         loadTimerSettings();
         pendingChanges = false;
@@ -480,6 +491,10 @@ public:
 
     void save() override
     {
+        if (!clamav_quarantine_set_retention_days(static_cast<unsigned int>(quarantineRetention->value()))) {
+            QMessageBox::warning(widget(), i18n("ClamAV"), i18n("The quarantine retention setting could not be saved."));
+            return;
+        }
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("OnDemandDatabase"), boolValue(lazyLoading)})) return;
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("DatabaseKeepAlive"), keepAlive->text()})) return;
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("HeuristicAlerts"), boolValue(heuristicAlerts)})) return;
@@ -511,6 +526,7 @@ public:
         loadPaths({});
         freshclamSchedule->setText(QStringLiteral("daily"));
         freshclamDelay->setText(QStringLiteral("1h"));
+        quarantineRetention->setValue(CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS);
         setNeedsSave(true);
         pendingChanges = true;
         applyButton->setEnabled(true);
@@ -529,6 +545,7 @@ private:
     QCheckBox *lazyLoading, *heuristicAlerts, *heuristicPrecedence, *onAccessPrevention;
     QLineEdit *keepAlive;
     QLineEdit *freshclamSchedule, *freshclamDelay;
+    QSpinBox *quarantineRetention;
     QWidget *pathEditor;
     QVBoxLayout *pathLayout;
     QList<QLineEdit *> pathEdits;
@@ -693,6 +710,9 @@ private:
         size_t quarantineItems = 0;
         size_t quarantineReview = 0;
         size_t quarantineSerious = 0;
+        size_t expired = 0;
+        clamav_quarantine_cleanup_expired(&expired);
+        (void)expired;
         if (clamav_quarantine_path(quarantinePath) && clamav_quarantine_list(&entries, &quarantineItems))
         {
             for (size_t i = 0; i < quarantineItems; ++i) {

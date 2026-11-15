@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #define CLAMAV_QUARANTINE_ID_LENGTH 33
+#define CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS 30
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,11 @@ void clamav_quarantine_list_free(struct clamav_quarantine_entry *entries);
  * quarantine entry only after a successful restore. */
 int clamav_quarantine_restore(const char *id, const char *destination_path);
 int clamav_quarantine_delete(const char *id);
+
+/* Remove entries older than the configured retention period. */
+int clamav_quarantine_cleanup_expired(size_t *deleted);
+int clamav_quarantine_get_retention_days(unsigned int *days);
+int clamav_quarantine_set_retention_days(unsigned int days);
 
 /* Append one audit record as JSON Lines. Logging is best-effort and does not
  * affect quarantine operations. */

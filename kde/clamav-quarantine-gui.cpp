@@ -297,6 +297,9 @@ private:
         char path[PATH_MAX];
         struct clamav_quarantine_entry *entries = nullptr;
         size_t count = 0;
+        size_t expired = 0;
+        clamav_quarantine_cleanup_expired(&expired);
+        (void)expired;
         table->setSortingEnabled(false);
         table->setRowCount(0);
         if (clamav_quarantine_path(path))

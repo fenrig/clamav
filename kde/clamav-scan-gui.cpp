@@ -239,6 +239,40 @@ public:
     }
 
 private:
+    static QString friendlyActivity(const QString &raw)
+    {
+        QStringList lines;
+        for (const QString &sourceLine : raw.split(QLatin1Char('\n'))) {
+            const QString line = sourceLine.trimmed();
+            if (line.isEmpty())
+                continue;
+            if (line.startsWith(QStringLiteral("No viruses found."))) {
+                lines << QStringLiteral("✓  No threats found");
+            } else if (line.startsWith(QStringLiteral("A virus was identified."))) {
+                lines << QStringLiteral("⚠  Threat detected");
+            } else if (line.startsWith(QStringLiteral("Quarantined:"))) {
+                lines << QStringLiteral("↪  Threat moved to quarantine");
+            } else if (line.startsWith(QStringLiteral("Quarantine failed"))) {
+                lines << QStringLiteral("⚠  Threat found, but quarantine failed");
+            } else if (line.startsWith(QStringLiteral("SHA-256:"))
+                       || line.startsWith(QStringLiteral("Scanner:"))
+                       || line.contains(QStringLiteral("FILDES"))) {
+                continue;
+            } else if (line.endsWith(QStringLiteral(" OK"))) {
+                const QString path = line.left(line.size() - 3).trimmed();
+                lines << tr("✓  Checked: %1 — no threats found")
+                    .arg(QFileInfo(path).fileName().isEmpty() ? path : QFileInfo(path).fileName());
+            } else if (line.contains(QStringLiteral(" FOUND"))) {
+                const QString path = line.left(line.indexOf(QStringLiteral(" FOUND"))).trimmed();
+                lines << tr("⚠  Threat detected: %1")
+                    .arg(QFileInfo(path.section(QLatin1Char(':'), 0, 0)).fileName());
+            } else {
+                lines << line;
+            }
+        }
+        return lines.join(QLatin1Char('\n'));
+    }
+
     QString targetDescription() const
     {
         QStringList names;
@@ -338,8 +372,8 @@ private:
     {
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
-            output_->moveCursor(QTextCursor::End);
-            output_->insertPlainText(QString::fromLocal8Bit(text));
+            rawOutput_ += QString::fromLocal8Bit(text);
+            output_->setPlainText(friendlyActivity(rawOutput_));
             output_->ensureCursorVisible();
         }
     }
@@ -440,6 +474,7 @@ private:
     QString socketPath_;
     QString cpuTarget_ = tr("Scanner");
     QString statusText_;
+    QString rawOutput_;
     QList<qint64> pids_;
     QProcess *process_ = nullptr;
     QLabel *queueStatus_ = nullptr;

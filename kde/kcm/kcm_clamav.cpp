@@ -164,6 +164,9 @@ public:
         addAction(actionLayout, i18n("Disable on-access scanner"), "disable", "clamav-clamonacc.service");
         addAction(actionLayout, i18n("Enable daily updates"), "enable", "clamav-freshclam-once.timer");
         addAction(actionLayout, i18n("Disable daily updates"), "disable", "clamav-freshclam-once.timer");
+        auto *quarantine = new QPushButton(i18n("Open quarantine"), actions);
+        connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
+        actionLayout->addWidget(quarantine);
         auto *refresh = new QPushButton(i18n("Refresh"), actions);
         connect(refresh, &QPushButton::clicked, this, &ClamavKCM::refreshStatus);
         actionLayout->addWidget(refresh);
@@ -355,6 +358,12 @@ private:
         auto *button = new QPushButton(label, widget());
         connect(button, &QPushButton::clicked, this, [this, action, unit] { runHelper({QStringLiteral("service"), action, unit}); refreshStatus(); });
         layout->addWidget(button);
+    }
+    void openQuarantine()
+    {
+        if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
+            QMessageBox::warning(widget(), i18n("ClamAV"),
+                                 i18n("The quarantine manager could not be opened."));
     }
     bool runHelper(const QStringList &arguments)
     {

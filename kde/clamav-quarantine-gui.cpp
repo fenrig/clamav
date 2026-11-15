@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -11,6 +12,7 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QUrl>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -28,6 +30,7 @@ public:
         refreshButton = new QPushButton(tr("Refresh"), this);
         restoreButton = new QPushButton(tr("Restore…"), this);
         deleteButton = new QPushButton(tr("Delete permanently"), this);
+        lookupButton = new QPushButton(tr("Look up detection"), this);
 
         table->setColumnCount(6);
         table->setHorizontalHeaderLabels({tr("Detection"), tr("Component"), tr("Original name"),
@@ -41,6 +44,7 @@ public:
         table->verticalHeader()->setVisible(false);
         restoreButton->setEnabled(false);
         deleteButton->setEnabled(false);
+        lookupButton->setEnabled(false);
 
         layout->addWidget(new QLabel(tr("User quarantine (payloads are never opened by this application)"), this));
         layout->addWidget(pathLabel);
@@ -49,6 +53,7 @@ public:
         toolbar->addStretch();
         toolbar->addWidget(restoreButton);
         toolbar->addWidget(deleteButton);
+        toolbar->addWidget(lookupButton);
         layout->addLayout(toolbar);
         setCentralWidget(central);
         setWindowTitle(tr("ClamAV Quarantine"));
@@ -57,10 +62,12 @@ public:
         connect(refreshButton, &QPushButton::clicked, this, &QuarantineWindow::refresh);
         connect(restoreButton, &QPushButton::clicked, this, &QuarantineWindow::restore);
         connect(deleteButton, &QPushButton::clicked, this, &QuarantineWindow::remove);
+        connect(lookupButton, &QPushButton::clicked, this, &QuarantineWindow::lookupDetection);
         connect(table, &QTableWidget::itemSelectionChanged, this, [this] {
             const bool selected = table->currentRow() >= 0;
             restoreButton->setEnabled(selected);
             deleteButton->setEnabled(selected);
+            lookupButton->setEnabled(selected);
         });
         refresh();
     }
@@ -130,11 +137,28 @@ private:
             refresh();
     }
 
+    void lookupDetection()
+    {
+        const auto *item = table->item(table->currentRow(), 0);
+        if (!item)
+            return;
+        QString detection = item->text().split('\n').value(0).trimmed();
+        const int separator = detection.lastIndexOf(QStringLiteral(": "));
+        if (separator >= 0)
+            detection = detection.mid(separator + 2);
+        detection.remove(QRegularExpression(QStringLiteral("\\s+FOUND$"), QRegularExpression::CaseInsensitiveOption));
+        if (detection.isEmpty())
+            return;
+        const QByteArray encoded = QUrl::toPercentEncoding(detection.left(256));
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+") + QString::fromLatin1(encoded)));
+    }
+
     QLabel *pathLabel;
     QTableWidget *table;
     QPushButton *refreshButton;
     QPushButton *restoreButton;
     QPushButton *deleteButton;
+    QPushButton *lookupButton;
 };
 
 int main(int argc, char **argv)

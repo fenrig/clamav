@@ -8,6 +8,7 @@
 
 #define CLAMAV_QUARANTINE_ID_LENGTH 33
 #define CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS 30
+#define CLAMAV_QUARANTINE_DEFAULT_MAX_FILE_SIZE (512ULL * 1024ULL * 1024ULL)
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,9 @@ int clamav_quarantine_store(const char *source_path,
                             int move_file,
                             char id[CLAMAV_QUARANTINE_ID_LENGTH],
                             char payload_path[PATH_MAX]);
+
+/* Return the maximum size of one payload accepted by the quarantine store. */
+unsigned long long clamav_quarantine_max_file_size(void);
 
 /* Return the current user's quarantine directory, creating it if necessary. */
 int clamav_quarantine_path(char path[PATH_MAX]);

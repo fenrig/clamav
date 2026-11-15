@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
@@ -225,6 +226,11 @@ static int copy_file(int source, int destination)
     return count == 0;
 }
 
+unsigned long long clamav_quarantine_max_file_size(void)
+{
+    return CLAMAV_QUARANTINE_DEFAULT_MAX_FILE_SIZE;
+}
+
 static int write_metadata(const char *path, const char *id,
                           const struct clamav_quarantine_metadata *metadata)
 {
@@ -276,6 +282,9 @@ int clamav_quarantine_store(const char *source_path,
     int source;
     int destination;
     int success = 0;
+    struct stat source_status;
+    struct statvfs filesystem_status;
+    unsigned long long available;
     if (source_path == NULL || metadata == NULL || !clamav_quarantine_path(directory)
             || !random_id(id))
         return 0;
@@ -286,8 +295,23 @@ int clamav_quarantine_store(const char *source_path,
     source = open(source_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (source < 0)
         return 0;
+    if (fstat(source, &source_status) != 0 || !S_ISREG(source_status.st_mode)
+            || source_status.st_size < 0
+            || (unsigned long long)source_status.st_size > clamav_quarantine_max_file_size()
+            || statvfs(directory, &filesystem_status) != 0) {
+        close(source);
+        return 0;
+    }
+    available = (unsigned long long)filesystem_status.f_bavail
+        * (unsigned long long)filesystem_status.f_frsize;
+    if ((unsigned long long)source_status.st_size > available) {
+        close(source);
+        return 0;
+    }
     destination = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (destination >= 0 && copy_file(source, destination)
+    if (destination >= 0
+            && posix_fallocate(destination, 0, source_status.st_size) == 0
+            && copy_file(source, destination)
             && fchmod(destination, 0600) == 0 && fsync(destination) == 0) {
         close(destination);
         destination = -1;

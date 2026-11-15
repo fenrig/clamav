@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -485,8 +486,23 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         quarantine_metadata.source = path;
         quarantine_metadata.detection = details;
         quarantine_metadata.sha256 = sha256;
-        quarantined = clamav_quarantine_store(path, &quarantine_metadata, 1,
-                                              quarantine_id, quarantine_path);
+        {
+            struct stat status;
+            if (stat(path, &status) == 0
+                    && status.st_size >= 0
+                    && (unsigned long long)status.st_size > clamav_quarantine_max_file_size()) {
+                size_t old_length = strlen(message);
+                const char *notice = "\n\nQuarantine skipped: file is larger than the quarantine limit";
+                char *expanded = (char *)realloc(message, old_length + strlen(notice) + 1);
+                if (expanded != NULL) {
+                    message = expanded;
+                    sprintf(message + old_length, "%s", notice);
+                }
+            } else {
+                quarantined = clamav_quarantine_store(path, &quarantine_metadata, 1,
+                                                      quarantine_id, quarantine_path);
+            }
+        }
         if (quarantined) {
             size_t old_length = strlen(message);
             char *expanded = (char *)realloc(message, old_length + strlen("\n\nQuarantined: ") + strlen(quarantine_path) + 1);

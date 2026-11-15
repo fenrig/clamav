@@ -280,10 +280,13 @@ public:
         auto *updatesLayout = new QVBoxLayout(updatesPage);
         auto *quarantinePage = new QWidget(tabs);
         auto *quarantineLayout = new QVBoxLayout(quarantinePage);
+        auto *auditPage = new QWidget(tabs);
+        auto *auditLayout = new QVBoxLayout(auditPage);
         tabs->addTab(overviewPage, QIcon::fromTheme(QStringLiteral("view-dashboard")), i18n("Overview"));
         tabs->addTab(scanningPage, QIcon::fromTheme(QStringLiteral("security-high")), i18n("Scanning"));
         tabs->addTab(updatesPage, QIcon::fromTheme(QStringLiteral("system-software-update")), i18n("Updates"));
         tabs->addTab(quarantinePage, QIcon::fromTheme(QStringLiteral("clamav-quarantine")), i18n("Quarantine"));
+        tabs->addTab(auditPage, QIcon::fromTheme(QStringLiteral("security-high")), i18n("Security audit"));
         root->addWidget(tabs, 1);
 
         healthBanner = new QFrame(widget());
@@ -503,6 +506,33 @@ public:
         quarantineControlsLayout->addWidget(cleanupNow, 0, 1);
         quarantineLayout->addWidget(quarantineControls);
         quarantineLayout->addStretch();
+        auto *auditIntro = new QLabel(i18n("Security audits look for configuration weaknesses and signs associated with known rootkits. They complement ClamAV and do not prove that a system is clean."), auditPage);
+        auditIntro->setWordWrap(true);
+        auditIntro->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+        auditLayout->addWidget(auditIntro);
+        auto *auditTools = new QGroupBox(i18n("Available audit tools"), auditPage);
+        auto *auditForm = new QFormLayout(auditTools);
+        lynisStatus = new QLabel(auditTools);
+        chkrootkitStatus = new QLabel(auditTools);
+        runLynisButton = new QPushButton(i18n("Run Lynis audit"), auditTools);
+        runLynisButton->setIcon(QIcon::fromTheme(QStringLiteral("security-high")));
+        runChkrootkitButton = new QPushButton(i18n("Run chkrootkit check"), auditTools);
+        runChkrootkitButton->setIcon(QIcon::fromTheme(QStringLiteral("security-low")));
+        auditForm->addRow(i18n("Lynis:"), lynisStatus);
+        auditForm->addRow(i18n("chkrootkit:"), chkrootkitStatus);
+        auditForm->addRow(runLynisButton);
+        auditForm->addRow(runChkrootkitButton);
+        auditLayout->addWidget(auditTools);
+        auditOutput = new QPlainTextEdit(auditPage);
+        auditOutput->setReadOnly(true);
+        auditOutput->setPlaceholderText(i18n("Audit results will appear here."));
+        auditLayout->addWidget(auditOutput, 1);
+        connect(runLynisButton, &QPushButton::clicked, this, [this] {
+            runAudit(QStringLiteral("lynis"), {QStringLiteral("audit"), QStringLiteral("system"), QStringLiteral("--no-colors")}, i18n("Lynis"));
+        });
+        connect(runChkrootkitButton, &QPushButton::clicked, this, [this] {
+            runAudit(QStringLiteral("chkrootkit"), {}, i18n("chkrootkit"));
+        });
         connect(lazyLoading, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         connect(keepAlive, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(heuristicAlerts, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
@@ -629,6 +659,12 @@ private:
     QSpinBox *quarantineRetention;
     QCheckBox *quarantineTimerEnabled;
     QLabel *quarantineTimerStatus;
+    QLabel *lynisStatus;
+    QLabel *chkrootkitStatus;
+    QPushButton *runLynisButton;
+    QPushButton *runChkrootkitButton;
+    QPlainTextEdit *auditOutput;
+    QProcess *auditProcess = nullptr;
     QWidget *pathEditor;
     QVBoxLayout *pathLayout;
     QList<QLineEdit *> pathEdits;
@@ -752,6 +788,50 @@ private:
         if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
             QMessageBox::warning(widget(), i18n("ClamAV"),
                                  i18n("The quarantine manager could not be opened."));
+    }
+    void updateAuditAvailability()
+    {
+        const QString lynis = QStandardPaths::findExecutable(QStringLiteral("lynis"));
+        const QString chkrootkit = QStandardPaths::findExecutable(QStringLiteral("chkrootkit"));
+        lynisStatus->setText(lynis.isEmpty() ? i18n("Not installed") : i18n("Installed (%1)", lynis));
+        chkrootkitStatus->setText(chkrootkit.isEmpty() ? i18n("Not installed") : i18n("Installed (%1)", chkrootkit));
+        runLynisButton->setEnabled(!lynis.isEmpty() && auditProcess == nullptr);
+        runChkrootkitButton->setEnabled(!chkrootkit.isEmpty() && auditProcess == nullptr);
+    }
+    void runAudit(const QString &program, const QStringList &arguments, const QString &label)
+    {
+        if (auditProcess != nullptr)
+            return;
+        const QString executable = QStandardPaths::findExecutable(program);
+        if (executable.isEmpty()) {
+            QMessageBox::information(widget(), i18n("ClamAV"),
+                                     i18n("%1 is not installed.", label));
+            updateAuditAvailability();
+            return;
+        }
+        auditOutput->setPlainText(i18n("Running %1…\n\nA privilege prompt may appear.", label));
+        auditProcess = new QProcess(this);
+        connect(auditProcess, &QProcess::readyReadStandardOutput, this, [this] {
+            auditOutput->appendPlainText(QString::fromLocal8Bit(auditProcess->readAllStandardOutput()));
+        });
+        connect(auditProcess, &QProcess::readyReadStandardError, this, [this] {
+            const QString error = QString::fromLocal8Bit(auditProcess->readAllStandardError());
+            if (!error.isEmpty())
+                auditOutput->appendPlainText(error);
+        });
+        connect(auditProcess, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+                [this, label](int code, QProcess::ExitStatus status) {
+            const QString output = auditOutput->toPlainText();
+            auditOutput->setPlainText(output + QStringLiteral("\n\n")
+                + (status == QProcess::NormalExit
+                    ? i18n("%1 finished with exit code %2.", label, code)
+                    : i18n("%1 terminated unexpectedly.", label)));
+            auditProcess->deleteLater();
+            auditProcess = nullptr;
+            updateAuditAvailability();
+        });
+        auditProcess->start(QStringLiteral("pkexec"), QStringList{executable} + arguments);
+        updateAuditAvailability();
     }
     static QStringList commonScanPaths()
     {
@@ -948,6 +1028,7 @@ private:
             healthActionType = 0;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
         }
+        updateAuditAvailability();
     }
 };
 

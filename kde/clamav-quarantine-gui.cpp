@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -348,7 +349,9 @@ private:
 int main(int argc, char **argv)
 {
     QApplication application(argc, argv);
+    application.setDesktopFileName(QStringLiteral("clamav-quarantine"));
     QuarantineWindow window;
+    window.setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
     window.show();
     return application.exec();
 }

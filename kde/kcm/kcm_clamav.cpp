@@ -159,6 +159,26 @@ bool databaseAvailable()
         QDir::Files).isEmpty();
 }
 
+QString friendlyStats(const QString &raw)
+{
+    QStringList lines;
+    QRegularExpressionMatch match = QRegularExpression(QStringLiteral("^QUEUE:\\s*(\\d+)\\s+items"),
+        QRegularExpression::MultilineOption).match(raw);
+    if (match.hasMatch())
+        lines << i18n("Queue: %1 item(s)", match.captured(1));
+    match = QRegularExpression(QStringLiteral("^THREADS:\\s+live\\s+(\\d+)\\s+idle\\s+(\\d+)\\s+max\\s+(\\d+)"),
+        QRegularExpression::MultilineOption).match(raw);
+    if (match.hasMatch())
+        lines << i18n("Workers: %1 active, %2 idle (maximum %3)", match.captured(1), match.captured(2), match.captured(3));
+    match = QRegularExpression(QStringLiteral("^MEMSTATS:.*?heap\\s+([\\d.]+)M.*?mmap\\s+([\\d.]+)M.*?pools_total\\s+([\\d.]+)M"),
+        QRegularExpression::MultilineOption).match(raw);
+    if (match.hasMatch()) {
+        const double memory = match.captured(1).toDouble() + match.captured(2).toDouble() + match.captured(3).toDouble();
+        lines << i18n("Memory: %1 MiB", QString::number(memory, 'f', 1));
+    }
+    return lines.isEmpty() ? i18n("No live statistics available") : lines.join(QStringLiteral("\n"));
+}
+
 int quarantineLevel(const char *detection)
 {
     const QString name = QString::fromLocal8Bit(detection).section('\n', 0, 0)
@@ -300,7 +320,7 @@ public:
         };
         addOverviewCard(i18n("Antivirus"), 0, 0, &engineCard, &engineOverview, &engineAction, i18n("Start service"));
         addOverviewCard(i18n("Database updates"), 0, 1, &updatesCard, &updatesOverview, &updatesAction, i18n("Set up updates"));
-        addOverviewCard(i18n("Virus database"), 0, 2, &databaseCard, &databaseOverview, nullptr, {});
+        addOverviewCard(i18n("Virus database"), 0, 2, &databaseCard, &databaseOverview, &databaseAction, i18n("Update now"));
         addOverviewCard(i18n("On-access protection"), 1, 0, &onAccessCard, &onAccessOverview, &onAccessAction, i18n("Enable protection"));
         addOverviewCard(i18n("Quarantine"), 1, 1, &quarantineCard, &quarantineOverview, &quarantineAction, i18n("Open quarantine"));
         auto *overviewSpacer = new QWidget(widget());
@@ -309,10 +329,11 @@ public:
         overviewLayout->addLayout(overview);
         connect(engineAction, &QPushButton::clicked, this, &ClamavKCM::startDaemon);
         connect(updatesAction, &QPushButton::clicked, this, &ClamavKCM::setupFreshclam);
+        connect(databaseAction, &QPushButton::clicked, this, &ClamavKCM::updateDatabaseNow);
         connect(onAccessAction, &QPushButton::clicked, this, &ClamavKCM::enableOnAccess);
         connect(quarantineAction, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
 
-        auto *statusBox = new QGroupBox(i18n("Status"), widget());
+        auto *statusBox = new QGroupBox(i18n("System details"), widget());
         auto *status = new QFormLayout(statusBox);
         clamdStatus = new QLabel;
         freshclamStatus = new QLabel;
@@ -325,28 +346,18 @@ public:
         stats->setReadOnly(true);
         stats->setMaximumHeight(150);
         stats->setLineWrapMode(QPlainTextEdit::NoWrap);
-        status->addRow(i18n("Clam daemon:"), clamdStatus);
-        status->addRow(i18n("FreshClam:"), freshclamStatus);
-        status->addRow(i18n("On-access scanner:"), onAccessStatus);
-        status->addRow(i18n("Update timer:"), timerStatus);
-        status->addRow(i18n("Database:"), databaseStatus);
-        status->addRow(i18n("Scanner statistics:"), stats);
+        status->addRow(i18n("Antivirus service:"), clamdStatus);
+        status->addRow(i18n("Database updater:"), freshclamStatus);
+        status->addRow(i18n("On-access protection:"), onAccessStatus);
+        status->addRow(i18n("Update schedule:"), timerStatus);
+        status->addRow(i18n("Virus database:"), databaseStatus);
+        status->addRow(i18n("Scanner workload:"), stats);
         overviewLayout->addWidget(statusBox);
 
         auto *actions = new QGroupBox(i18n("Quick actions"), widget());
         auto *actionLayout = new QGridLayout(actions);
         actionLayout->setHorizontalSpacing(8);
         actionLayout->setVerticalSpacing(8);
-        addAction(actionLayout, i18n("Reload database"), "reload", "clamav-daemon.service");
-        addAction(actionLayout, i18n("Restart daemon"), "restart", "clamav-daemon.service");
-        addAction(actionLayout, i18n("Update database now"), "start", "clamav-freshclam-once.service");
-        addAction(actionLayout, i18n("Start on-access scanner"), "start", "clamav-clamonacc.service");
-        addAction(actionLayout, i18n("Enable ClamAV daemon"), "enable", "clamav-daemon.service");
-        addAction(actionLayout, i18n("Disable ClamAV daemon"), "disable", "clamav-daemon.service");
-        addAction(actionLayout, i18n("Enable on-access scanner"), "enable", "clamav-clamonacc.service");
-        addAction(actionLayout, i18n("Disable on-access scanner"), "disable", "clamav-clamonacc.service");
-        addAction(actionLayout, i18n("Enable daily updates"), "enable", "clamav-freshclam-once.timer");
-        addAction(actionLayout, i18n("Disable daily updates"), "disable", "clamav-freshclam-once.timer");
         auto *quarantine = new QPushButton(i18n("Open quarantine"), actions);
         quarantine->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
         connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
@@ -400,8 +411,24 @@ public:
         updatesForm->addRow(i18n("Update schedule:"), freshclamSchedule);
         updatesForm->addRow(i18n("Randomized delay:"), freshclamDelay);
         scanningLayout->addWidget(settings);
+        auto *serviceControls = new QGroupBox(i18n("Advanced service controls"), scanningPage);
+        auto *serviceLayout = new QGridLayout(serviceControls);
+        addAction(serviceLayout, i18n("Reload daemon"), "reload", "clamav-daemon.service");
+        addAction(serviceLayout, i18n("Restart daemon"), "restart", "clamav-daemon.service");
+        addAction(serviceLayout, i18n("Enable daemon"), "enable", "clamav-daemon.service");
+        addAction(serviceLayout, i18n("Disable daemon"), "disable", "clamav-daemon.service");
+        addAction(serviceLayout, i18n("Start on-access"), "start", "clamav-clamonacc.service");
+        addAction(serviceLayout, i18n("Enable on-access"), "enable", "clamav-clamonacc.service");
+        addAction(serviceLayout, i18n("Disable on-access"), "disable", "clamav-clamonacc.service");
+        scanningLayout->addWidget(serviceControls);
         scanningLayout->addStretch();
         updatesLayout->addWidget(updates);
+        auto *updateControls = new QGroupBox(i18n("Update controls"), updatesPage);
+        auto *updateLayout = new QGridLayout(updateControls);
+        addAction(updateLayout, i18n("Update database now"), "start", "clamav-freshclam-once.service");
+        addAction(updateLayout, i18n("Enable automatic updates"), "enable", "clamav-freshclam-once.timer");
+        addAction(updateLayout, i18n("Disable automatic updates"), "disable", "clamav-freshclam-once.timer");
+        updatesLayout->addWidget(updateControls);
         updatesLayout->addStretch();
         connect(lazyLoading, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         connect(keepAlive, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
@@ -492,7 +519,7 @@ private:
     int healthActionType = 0;
     QFrame *engineCard, *updatesCard, *databaseCard, *onAccessCard, *quarantineCard;
     QLabel *engineOverview, *updatesOverview, *databaseOverview, *onAccessOverview, *quarantineOverview;
-    QPushButton *engineAction, *updatesAction, *onAccessAction, *quarantineAction;
+    QPushButton *engineAction, *updatesAction, *databaseAction, *onAccessAction, *quarantineAction;
     QLabel *clamdStatus, *freshclamStatus, *onAccessStatus, *timerStatus, *databaseStatus;
     QPlainTextEdit *stats;
     QCheckBox *lazyLoading, *heuristicAlerts, *heuristicPrecedence, *onAccessPrevention;
@@ -594,6 +621,13 @@ private:
         runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-freshclam-once.timer")});
         refreshStatus();
     }
+    void updateDatabaseNow()
+    {
+        if (!QFile::exists(configDir + QStringLiteral("/freshclam.conf")) && !runHelper({QStringLiteral("initialize-freshclam")}))
+            return;
+        runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-freshclam-once.service")});
+        refreshStatus();
+    }
     void enableOnAccess()
     {
         if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("OnAccessPrevention"), QStringLiteral("yes")}))
@@ -624,19 +658,22 @@ private:
     {
         if (!pendingChanges)
             loadTimerSettings();
-        clamdStatus->setText(serviceState(QStringLiteral("clamav-daemon.service")));
-        freshclamStatus->setText(serviceState(QStringLiteral("clamav-freshclam.service")));
-        onAccessStatus->setText(serviceState(QStringLiteral("clamav-clamonacc.service")));
-        timerStatus->setText(serviceState(QStringLiteral("clamav-freshclam-once.timer")));
-        const QString response = clamdCommand("nVERSION\n");
-        databaseStatus->setText(databaseInfo() + (response.isEmpty() ? QString() : QStringLiteral("; ") + response.trimmed()));
+        const QString daemon = serviceState(QStringLiteral("clamav-daemon.service"));
+        const QString freshclam = serviceState(QStringLiteral("clamav-freshclam.service"));
+        const QString onAccess = serviceState(QStringLiteral("clamav-clamonacc.service"));
+        const QString timer = serviceState(QStringLiteral("clamav-freshclam-once.timer"));
+        clamdStatus->setText(daemon == QStringLiteral("active") ? i18n("Running") : i18n("Stopped"));
+        freshclamStatus->setText(freshclam == QStringLiteral("active") ? i18n("Running") : i18n("Not running"));
+        onAccessStatus->setText(onAccessPrevention->isChecked()
+            ? (onAccess == QStringLiteral("active") ? i18n("Running") : i18n("Configured but stopped"))
+            : i18n("Disabled (optional)"));
+        timerStatus->setText(timer == QStringLiteral("active") ? i18n("Scheduled") : i18n("Not scheduled"));
+        databaseStatus->setText(databaseAvailable()
+            ? i18n("Available · updated %1", databaseUpdated())
+            : i18n("Unavailable"));
         const QString stat = clamdCommand("nSTATS\n");
-        stats->setPlainText(stat.isEmpty() ? i18n("Clamd is not reachable") : stat.trimmed());
+        stats->setPlainText(stat.isEmpty() ? i18n("The ClamAV service is not reachable.") : friendlyStats(stat));
 
-        const QString daemon = clamdStatus->text();
-        const QString freshclam = freshclamStatus->text();
-        const QString timer = timerStatus->text();
-        const QString onAccess = onAccessStatus->text();
         const bool daemonRunning = daemon == QStringLiteral("active");
         const bool updatesRunning = freshclam == QStringLiteral("active") || timer == QStringLiteral("active");
         const bool databaseReady = databaseAvailable();
@@ -715,7 +752,7 @@ private:
             healthAction->setText(i18n("Start protection"));
             healthActionType = 3;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
-        } else if (quarantineSerious > 0 || quarantineReview > 0 || !onAccessRunning || !updatesRunning) {
+        } else if (quarantineReview > 0 || !updatesRunning) {
             healthTitle->setText(i18n("Protection is running"));
             if (quarantineReview > 0) {
                 const QString reviewText = quarantineSerious > 0
@@ -730,9 +767,9 @@ private:
                 healthAction->setText(i18n("Enable updates"));
                 healthActionType = 2;
             } else {
-                healthDetails->setText(i18n("ClamAV is available. On-access protection is disabled, which is optional but provides less automatic protection."));
-                healthAction->setText(i18n("Enable protection"));
-                healthActionType = 3;
+                healthDetails->setText(i18n("ClamAV is available, but automatic virus database updates are not active."));
+                healthAction->setText(i18n("Enable updates"));
+                healthActionType = 2;
             }
             healthAction->setVisible(true);
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));

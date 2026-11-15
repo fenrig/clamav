@@ -737,7 +737,7 @@ private:
         updatesAction->setText(!freshclamInitialized ? i18n("Initialize FreshClam") : i18n("Enable updates"));
         onAccessAction->setVisible(!onAccessRunning);
         onAccessAction->setText(onAccessConfigured ? i18n("Start protection") : i18n("Enable and start"));
-        quarantineAction->setVisible(quarantineItems > 0);
+        quarantineAction->setVisible(quarantineReview > 0);
 
         healthAction->setVisible(true);
         if (!daemonRunning) {

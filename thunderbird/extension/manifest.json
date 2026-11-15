@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "ClamAV attachment scanner",
   "description": "Scan Thunderbird attachments for viruses with ClamAV.",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "icons": {
     "16": "logo.svg",
     "32": "logo.svg",

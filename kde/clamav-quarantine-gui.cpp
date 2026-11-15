@@ -190,9 +190,20 @@ public:
 
         auto *detailWidget = new QWidget(this);
         auto *detailLayout = new QVBoxLayout(detailWidget);
-        emptyState = new QLabel(tr("Nothing selected\n\nSelect a quarantined item to view its details."), detailWidget);
+        emptyState = new QLabel(detailWidget);
+        emptyState->setObjectName(QStringLiteral("emptyState"));
+        emptyState->setTextFormat(Qt::RichText);
+        emptyState->setTextInteractionFlags(Qt::TextBrowserInteraction);
+        emptyState->setOpenExternalLinks(true);
+        emptyState->setText(tr("<h2>Nothing selected</h2>"
+                               "<p>Select a quarantined item to view its detection details, source, and ClamAV report.</p>"
+                               "<p><b>Restore</b> only when you trust the file and understand the detection. "
+                               "<b>Delete permanently</b> removes the isolated file.</p>"
+                               "<p><a href=\"https://docs.clamav.net/\">Open ClamAV documentation</a></p>"));
         emptyState->setAlignment(Qt::AlignCenter);
-        emptyState->setStyleSheet(QStringLiteral("font-size: 16px; color: palette(window-text); padding: 32px;"));
+        emptyState->setStyleSheet(QStringLiteral(
+            "QLabel#emptyState { font-size: 16px; color: palette(window-text); padding: 32px; }"
+            "QLabel#emptyState a { color: palette(link); }"));
         detailContent = new QWidget(detailWidget);
         auto *contentLayout = new QVBoxLayout(detailContent);
         contentLayout->setContentsMargins(0, 0, 0, 0);

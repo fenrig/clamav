@@ -125,6 +125,9 @@ public:
         table = new DeselectableTableWidget(this);
         searchBox = new QLineEdit(this);
         searchBox->setPlaceholderText(tr("Search detections, filenames, or components…"));
+        statusHeader = new QFrame(this);
+        statusHeaderTitle = new QLabel(statusHeader);
+        statusHeaderDetails = new QLabel(statusHeader);
         componentLabel = new QLabel(tr("Select an item"), this);
         originalLabel = new QLabel(this);
         sourceLabel = new QLabel(this);
@@ -231,7 +234,16 @@ public:
         splitter->setStretchFactor(1, 2);
         splitter->setSizes({600, 400});
 
-        layout->addWidget(new QLabel(tr("User quarantine (payloads are never opened by this application)"), this));
+        auto *intro = new QLabel(tr("User quarantine · payloads are never opened by this application"), this);
+        intro->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        layout->addWidget(intro);
+        auto *statusLayout = new QVBoxLayout(statusHeader);
+        statusLayout->setContentsMargins(16, 12, 16, 12);
+        statusHeaderTitle->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
+        statusHeaderDetails->setWordWrap(true);
+        statusLayout->addWidget(statusHeaderTitle);
+        statusLayout->addWidget(statusHeaderDetails);
+        layout->addWidget(statusHeader);
         layout->addWidget(pathLabel);
         layout->addWidget(splitter, 1);
         toolbar->addWidget(refreshButton);
@@ -278,11 +290,26 @@ private:
         else
             pathLabel->setText(tr("Location unavailable"));
         if (!clamav_quarantine_list(&entries, &count)) {
+            updateStatusHeader(0, 0, 0);
             QMessageBox::warning(this, tr("Quarantine"), tr("Unable to read the quarantine directory."));
             return;
         }
+        size_t serious = 0;
+        size_t review = 0;
+        size_t tests = 0;
         for (size_t i = 0; i < count; ++i) {
             const auto &entry = entries[i];
+            switch (threatLevel(QString::fromLocal8Bit(entry.detection))) {
+            case 1:
+                ++tests;
+                break;
+            case 2:
+                ++review;
+                break;
+            default:
+                ++serious;
+                break;
+            }
             const int row = table->rowCount();
             table->insertRow(row);
             auto *detectionItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name));
@@ -308,6 +335,7 @@ private:
             table->setItem(row, 2, dateItem);
         }
         clamav_quarantine_list_free(entries);
+        updateStatusHeader(serious, review, tests);
         table->setSortingEnabled(true);
         table->sortItems(2, Qt::DescendingOrder);
         table->clearSelection();
@@ -325,6 +353,27 @@ private:
         if (size < 1024LL * 1024 * 1024)
             return QObject::tr("%1 MiB").arg(size / (1024.0 * 1024.0), 0, 'f', 1);
         return QObject::tr("%1 GiB").arg(size / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
+    }
+
+    void updateStatusHeader(size_t serious, size_t review, size_t tests)
+    {
+        if (serious > 0) {
+            statusHeaderTitle->setText(tr("Action recommended"));
+            statusHeaderDetails->setText(tr("%1 serious detection(s) are quarantined. Keep them isolated and review or delete them before continuing.").arg(serious));
+            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
+        } else if (review > 0) {
+            statusHeaderTitle->setText(tr("Review recommended"));
+            statusHeaderDetails->setText(tr("%1 potentially unwanted item(s) are quarantined. They may be unwanted, but are not necessarily malware.").arg(review));
+            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
+        } else if (tests > 0) {
+            statusHeaderTitle->setText(tr("No action required"));
+            statusHeaderDetails->setText(tr("Only %1 harmless antivirus test signature(s) are quarantined. EICAR files can be safely deleted.").arg(tests));
+            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
+        } else {
+            statusHeaderTitle->setText(tr("Quarantine is clear"));
+            statusHeaderDetails->setText(tr("No quarantined files need your attention."));
+            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
+        }
     }
 
     void filterRows(const QString &text)
@@ -524,6 +573,9 @@ private:
     QLabel *pathLabel;
     QTableWidget *table;
     QLineEdit *searchBox;
+    QFrame *statusHeader;
+    QLabel *statusHeaderTitle;
+    QLabel *statusHeaderDetails;
     QPushButton *refreshButton;
     QPushButton *restoreButton;
     QPushButton *deleteButton;

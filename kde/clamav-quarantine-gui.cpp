@@ -21,6 +21,26 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+static QString localDescription(const QString &detection)
+{
+    const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
+    if (name.startsWith(QStringLiteral("Eicar-Signature"), Qt::CaseInsensitive))
+        return QObject::tr("This is the standard harmless EICAR antivirus test file, not a real infection.");
+    if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
+        return QObject::tr("ClamAV classified this as a potentially unwanted application. It may be unwanted or unsafe, but is not necessarily malware.");
+    if (name.startsWith(QStringLiteral("Phishing."), Qt::CaseInsensitive))
+        return QObject::tr("ClamAV classified this as phishing content intended to trick users into disclosing information or opening unsafe content.");
+    if (name.startsWith(QStringLiteral("Heuristics."), Qt::CaseInsensitive))
+        return QObject::tr("This is a heuristic detection. ClamAV found suspicious characteristics, but the signature name may not identify a specific malware family.");
+    if (name.contains(QStringLiteral("Trojan"), Qt::CaseInsensitive))
+        return QObject::tr("The detection name identifies this as Trojan-like malware. Keep it quarantined unless you can verify it is a false positive.");
+    if (name.contains(QStringLiteral("Virus"), Qt::CaseInsensitive)
+            || name.contains(QStringLiteral("Worm"), Qt::CaseInsensitive))
+        return QObject::tr("The detection name identifies this as a virus or worm signature associated with malicious code.");
+    return QObject::tr("ClamAV reported a signature match. Use the web-search or VirusTotal buttons for more context; these results are informational and may be incomplete.");
+}
+
 class QuarantineWindow final : public QMainWindow
 {
 public:
@@ -36,11 +56,13 @@ public:
         sourceLabel = new QLabel(this);
         hashLabel = new QLabel(this);
         createdLabel = new QLabel(this);
+        descriptionLabel = new QLabel(this);
         details = new QTextEdit(this);
         refreshButton = new QPushButton(tr("Refresh"), this);
         restoreButton = new QPushButton(tr("Restore…"), this);
         deleteButton = new QPushButton(tr("Delete permanently"), this);
         lookupButton = new QPushButton(tr("Look up detection"), this);
+        virusTotalButton = new QPushButton(tr("Open VirusTotal"), this);
 
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({tr("Detection"), tr("Component"), tr("Created")});
@@ -54,10 +76,12 @@ public:
         restoreButton->setEnabled(false);
         deleteButton->setEnabled(false);
         lookupButton->setEnabled(false);
+        virusTotalButton->setEnabled(false);
         details->setReadOnly(true);
         details->setMinimumHeight(140);
         sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         hashLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        descriptionLabel->setWordWrap(true);
 
         auto *detailWidget = new QWidget(this);
         auto *detailLayout = new QVBoxLayout(detailWidget);
@@ -71,6 +95,8 @@ public:
         form->addRow(tr("Created:"), createdLabel);
         detailLayout->addWidget(detailTitle);
         detailLayout->addLayout(form);
+        detailLayout->addWidget(new QLabel(tr("Summary:"), detailWidget));
+        detailLayout->addWidget(descriptionLabel);
         detailLayout->addWidget(new QLabel(tr("ClamAV report:"), detailWidget));
         detailLayout->addWidget(details, 1);
 
@@ -93,6 +119,7 @@ public:
         toolbar->addWidget(restoreButton);
         toolbar->addWidget(deleteButton);
         toolbar->addWidget(lookupButton);
+        toolbar->addWidget(virusTotalButton);
         layout->addLayout(toolbar);
         setCentralWidget(central);
         setWindowTitle(tr("ClamAV Quarantine"));
@@ -102,11 +129,13 @@ public:
         connect(restoreButton, &QPushButton::clicked, this, &QuarantineWindow::restore);
         connect(deleteButton, &QPushButton::clicked, this, &QuarantineWindow::remove);
         connect(lookupButton, &QPushButton::clicked, this, &QuarantineWindow::lookupDetection);
+        connect(virusTotalButton, &QPushButton::clicked, this, &QuarantineWindow::lookupVirusTotal);
         connect(table, &QTableWidget::itemSelectionChanged, this, [this] {
             const bool selected = table->currentRow() >= 0;
             restoreButton->setEnabled(selected);
             deleteButton->setEnabled(selected);
             lookupButton->setEnabled(selected);
+            virusTotalButton->setEnabled(selected && itemHashIsValid());
             updateDetails();
         });
         refresh();
@@ -165,6 +194,7 @@ private:
             sourceLabel->clear();
             hashLabel->clear();
             createdLabel->clear();
+            descriptionLabel->clear();
             details->clear();
             return;
         }
@@ -174,7 +204,16 @@ private:
         hashLabel->setText(item->data(Qt::UserRole + 4).toString());
         const auto created = item->data(Qt::UserRole + 5).toLongLong();
         createdLabel->setText(created > 0 ? QDateTime::fromSecsSinceEpoch(created).toString(Qt::TextDate) : tr("Unknown"));
-        details->setPlainText(item->data(Qt::UserRole + 1).toString());
+        const QString report = item->data(Qt::UserRole + 1).toString();
+        descriptionLabel->setText(localDescription(report));
+        details->setPlainText(report);
+    }
+
+    bool itemHashIsValid() const
+    {
+        const auto *item = table->item(table->currentRow(), 0);
+        return item != nullptr && QRegularExpression(QStringLiteral("^[0-9a-fA-F]{64}$"))
+            .match(item->data(Qt::UserRole + 4).toString()).hasMatch();
     }
 
     void restore()
@@ -219,6 +258,15 @@ private:
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+") + QString::fromLatin1(encoded)));
     }
 
+    void lookupVirusTotal()
+    {
+        const auto *item = table->item(table->currentRow(), 0);
+        if (!item || !itemHashIsValid())
+            return;
+        const QString hash = item->data(Qt::UserRole + 4).toString().toLower();
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.virustotal.com/gui/file/") + hash + QStringLiteral("/detection")));
+    }
+
     QLabel *pathLabel;
     QTableWidget *table;
     QPushButton *refreshButton;
@@ -230,7 +278,9 @@ private:
     QLabel *sourceLabel;
     QLabel *hashLabel;
     QLabel *createdLabel;
+    QLabel *descriptionLabel;
     QTextEdit *details;
+    QPushButton *virusTotalButton;
 };
 
 int main(int argc, char **argv)

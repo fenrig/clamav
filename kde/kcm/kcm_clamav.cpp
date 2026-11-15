@@ -239,7 +239,7 @@ public:
         title->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 600; color: palette(window-text);"));
         auto *subtitle = new QLabel(i18n("Manage malware scanning, on-access protection, and virus database updates."), header);
         subtitle->setWordWrap(true);
-        subtitle->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        subtitle->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         headerText->addWidget(title);
         headerText->addWidget(subtitle);
         headerLayout->addLayout(headerText, 1);
@@ -298,7 +298,7 @@ public:
             auto *cardLayout = new QVBoxLayout(card);
             cardLayout->setContentsMargins(14, 12, 14, 12);
             auto *heading = new QLabel(title, card);
-            heading->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(mid);"));
+            heading->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(window-text);"));
             auto *value = new QLabel(card);
             value->setWordWrap(true);
             value->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
@@ -377,7 +377,7 @@ public:
         auto *settingsLayout = new QVBoxLayout(settings);
         auto *settingsIntro = new QLabel(i18n("These options control how ClamAV scans files and how often its virus database is refreshed."), settings);
         settingsIntro->setWordWrap(true);
-        settingsIntro->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        settingsIntro->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         settingsLayout->addWidget(settingsIntro);
         auto *form = new QFormLayout;
         settingsLayout->addLayout(form);
@@ -402,7 +402,7 @@ public:
         auto *updatesForm = new QFormLayout(updates);
         auto *updatesIntro = new QLabel(i18n("Keep the virus database current so new threats can be detected."), updates);
         updatesIntro->setWordWrap(true);
-        updatesIntro->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        updatesIntro->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         updatesForm->addRow(updatesIntro);
         freshclamSchedule = new QLineEdit(updates);
         freshclamSchedule->setPlaceholderText(i18n("For example: daily or Mon *-*-* 03:00:00"));

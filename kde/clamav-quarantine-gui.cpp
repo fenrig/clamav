@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QFormLayout>
 #include <QFileDialog>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -12,6 +13,9 @@
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSplitter>
+#include <QTextEdit>
 #include <QUrl>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -27,28 +31,63 @@ public:
         auto *toolbar = new QHBoxLayout;
         pathLabel = new QLabel(this);
         table = new QTableWidget(this);
+        componentLabel = new QLabel(tr("Select an item"), this);
+        originalLabel = new QLabel(this);
+        sourceLabel = new QLabel(this);
+        hashLabel = new QLabel(this);
+        createdLabel = new QLabel(this);
+        details = new QTextEdit(this);
         refreshButton = new QPushButton(tr("Refresh"), this);
         restoreButton = new QPushButton(tr("Restore…"), this);
         deleteButton = new QPushButton(tr("Delete permanently"), this);
         lookupButton = new QPushButton(tr("Look up detection"), this);
 
-        table->setColumnCount(6);
-        table->setHorizontalHeaderLabels({tr("Detection"), tr("Component"), tr("Original name"),
-                                          tr("Source path"), tr("SHA-256"), tr("Created")});
+        table->setColumnCount(3);
+        table->setHorizontalHeaderLabels({tr("Detection"), tr("Component"), tr("Created")});
         table->setSelectionBehavior(QAbstractItemView::SelectRows);
         table->setSelectionMode(QAbstractItemView::SingleSelection);
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->horizontalHeader()->setStretchLastSection(true);
-        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
         table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
         table->verticalHeader()->setVisible(false);
         restoreButton->setEnabled(false);
         deleteButton->setEnabled(false);
         lookupButton->setEnabled(false);
+        details->setReadOnly(true);
+        details->setMinimumHeight(140);
+        sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        hashLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+        auto *detailWidget = new QWidget(this);
+        auto *detailLayout = new QVBoxLayout(detailWidget);
+        auto *detailTitle = new QLabel(tr("Detection details"), detailWidget);
+        detailTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        auto *form = new QFormLayout;
+        form->addRow(tr("Component:"), componentLabel);
+        form->addRow(tr("Original name:"), originalLabel);
+        form->addRow(tr("Source path:"), sourceLabel);
+        form->addRow(tr("SHA-256:"), hashLabel);
+        form->addRow(tr("Created:"), createdLabel);
+        detailLayout->addWidget(detailTitle);
+        detailLayout->addLayout(form);
+        detailLayout->addWidget(new QLabel(tr("ClamAV report:"), detailWidget));
+        detailLayout->addWidget(details, 1);
+
+        auto *splitter = new QSplitter(Qt::Horizontal, central);
+        auto *listWidget = new QWidget(splitter);
+        auto *listLayout = new QVBoxLayout(listWidget);
+        listLayout->setContentsMargins(0, 0, 0, 0);
+        listLayout->addWidget(new QLabel(tr("Quarantined detections"), listWidget));
+        listLayout->addWidget(table);
+        splitter->addWidget(listWidget);
+        splitter->addWidget(detailWidget);
+        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(1, 2);
 
         layout->addWidget(new QLabel(tr("User quarantine (payloads are never opened by this application)"), this));
         layout->addWidget(pathLabel);
-        layout->addWidget(table);
+        layout->addWidget(splitter, 1);
         toolbar->addWidget(refreshButton);
         toolbar->addStretch();
         toolbar->addWidget(restoreButton);
@@ -68,6 +107,7 @@ public:
             restoreButton->setEnabled(selected);
             deleteButton->setEnabled(selected);
             lookupButton->setEnabled(selected);
+            updateDetails();
         });
         refresh();
     }
@@ -91,24 +131,50 @@ private:
             const auto &entry = entries[i];
             const int row = table->rowCount();
             table->insertRow(row);
-            table->setItem(row, 0, new QTableWidgetItem(QString::fromLocal8Bit(entry.detection)));
+            auto *detectionItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.detection).split('\n').value(0));
+            detectionItem->setData(Qt::UserRole, QString::fromLatin1(entry.id));
+            detectionItem->setData(Qt::UserRole + 1, QString::fromLocal8Bit(entry.detection));
+            detectionItem->setData(Qt::UserRole + 2, QString::fromLocal8Bit(entry.original_name));
+            detectionItem->setData(Qt::UserRole + 3, QString::fromLocal8Bit(entry.source));
+            detectionItem->setData(Qt::UserRole + 4, QString::fromLatin1(entry.sha256));
+            detectionItem->setData(Qt::UserRole + 5, entry.created);
+            table->setItem(row, 0, detectionItem);
             table->setItem(row, 1, new QTableWidgetItem(QString::fromLocal8Bit(entry.component)));
-            table->setItem(row, 2, new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name)));
-            table->setItem(row, 3, new QTableWidgetItem(QString::fromLocal8Bit(entry.source)));
-            table->setItem(row, 4, new QTableWidgetItem(QString::fromLatin1(entry.sha256)));
-            table->setItem(row, 5, new QTableWidgetItem(entry.created > 0
+            table->setItem(row, 2, new QTableWidgetItem(entry.created > 0
                 ? QDateTime::fromSecsSinceEpoch(entry.created).toString(Qt::TextDate)
                 : tr("Unknown")));
-            table->item(row, 0)->setData(Qt::UserRole, QString::fromLatin1(entry.id));
         }
         clamav_quarantine_list_free(entries);
         table->clearSelection();
+        updateDetails();
     }
 
     QString selectedId() const
     {
         const auto *item = table->item(table->currentRow(), 0);
         return item ? item->data(Qt::UserRole).toString() : QString();
+    }
+
+    void updateDetails()
+    {
+        const int row = table->currentRow();
+        const auto *item = row >= 0 ? table->item(row, 0) : nullptr;
+        if (!item) {
+            componentLabel->setText(tr("Select an item"));
+            originalLabel->clear();
+            sourceLabel->clear();
+            hashLabel->clear();
+            createdLabel->clear();
+            details->clear();
+            return;
+        }
+        componentLabel->setText(table->item(row, 1)->text());
+        originalLabel->setText(item->data(Qt::UserRole + 2).toString());
+        sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
+        hashLabel->setText(item->data(Qt::UserRole + 4).toString());
+        const auto created = item->data(Qt::UserRole + 5).toLongLong();
+        createdLabel->setText(created > 0 ? QDateTime::fromSecsSinceEpoch(created).toString(Qt::TextDate) : tr("Unknown"));
+        details->setPlainText(item->data(Qt::UserRole + 1).toString());
     }
 
     void restore()
@@ -142,7 +208,7 @@ private:
         const auto *item = table->item(table->currentRow(), 0);
         if (!item)
             return;
-        QString detection = item->text().split('\n').value(0).trimmed();
+        QString detection = item->data(Qt::UserRole + 1).toString().split('\n').value(0).trimmed();
         const int separator = detection.lastIndexOf(QStringLiteral(": "));
         if (separator >= 0)
             detection = detection.mid(separator + 2);
@@ -159,6 +225,12 @@ private:
     QPushButton *restoreButton;
     QPushButton *deleteButton;
     QPushButton *lookupButton;
+    QLabel *componentLabel;
+    QLabel *originalLabel;
+    QLabel *sourceLabel;
+    QLabel *hashLabel;
+    QLabel *createdLabel;
+    QTextEdit *details;
 };
 
 int main(int argc, char **argv)

@@ -31,6 +31,9 @@ struct clamav_quarantine_entry {
     char sha256[65];
     long long size;
     long long created;
+    int payload_available;
+    int source_available;
+    char quarantine_reason[128];
 };
 
 /* Store a file in the current user's quarantine.
@@ -43,6 +46,13 @@ int clamav_quarantine_store(const char *source_path,
 
 /* Return the maximum size of one payload accepted by the quarantine store. */
 unsigned long long clamav_quarantine_max_file_size(void);
+
+/* Record a detection when the payload could not safely be copied locally.
+ * The original remains at source_path and can later be deleted explicitly. */
+int clamav_quarantine_record_pending(const char *source_path,
+                                     const struct clamav_quarantine_metadata *metadata,
+                                     const char *reason,
+                                     char id[CLAMAV_QUARANTINE_ID_LENGTH]);
 
 /* Return the current user's quarantine directory, creating it if necessary. */
 int clamav_quarantine_path(char path[PATH_MAX]);

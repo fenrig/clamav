@@ -232,7 +232,8 @@ unsigned long long clamav_quarantine_max_file_size(void)
 }
 
 static int write_metadata(const char *path, const char *id,
-                          const struct clamav_quarantine_metadata *metadata)
+                          const struct clamav_quarantine_metadata *metadata,
+                          const char *state, const char *reason, long long size)
 {
     struct json_object *object;
     const char *text;
@@ -254,6 +255,11 @@ static int write_metadata(const char *path, const char *id,
     json_object_object_add(object, "detection", json_object_new_string(metadata->detection ? metadata->detection : "unknown"));
     json_object_object_add(object, "sha256", json_object_new_string(metadata->sha256 ? metadata->sha256 : ""));
     json_object_object_add(object, "created", json_object_new_int64((int64_t)time(NULL)));
+    json_object_object_add(object, "state", json_object_new_string(state ? state : "quarantined"));
+    if (reason != NULL && reason[0] != '\0')
+        json_object_object_add(object, "quarantine_reason", json_object_new_string(reason));
+    if (size >= 0)
+        json_object_object_add(object, "size", json_object_new_int64(size));
     text = json_object_to_json_string_ext(object, JSON_C_TO_STRING_PLAIN);
     length = strlen(text);
     written = write(fd, text, length);
@@ -316,7 +322,8 @@ int clamav_quarantine_store(const char *source_path,
         close(destination);
         destination = -1;
         if (rename(temporary, payload_path) == 0
-                && write_metadata(metadata_path, id, metadata)) {
+                && write_metadata(metadata_path, id, metadata, "quarantined", NULL,
+                                  source_status.st_size)) {
             success = 1;
             if (move_file && unlink(source_path) != 0)
                 success = 0;
@@ -333,6 +340,32 @@ int clamav_quarantine_store(const char *source_path,
         unlink(metadata_path);
     }
     return success;
+}
+
+int clamav_quarantine_record_pending(const char *source_path,
+                                     const struct clamav_quarantine_metadata *metadata,
+                                     const char *reason,
+                                     char id[CLAMAV_QUARANTINE_ID_LENGTH])
+{
+    char directory[PATH_MAX];
+    char metadata_path[PATH_MAX];
+    struct stat status;
+    long long size = -1;
+
+    if (source_path == NULL || metadata == NULL || id == NULL
+            || !clamav_quarantine_path(directory) || !random_id(id)
+            || stat(source_path, &status) != 0 || !S_ISREG(status.st_mode))
+        return 0;
+    size = status.st_size;
+    if (snprintf(metadata_path, sizeof(metadata_path), "%s/%s.json", directory, id) >= (int)sizeof(metadata_path))
+        return 0;
+    if (!write_metadata(metadata_path, id, metadata, "pending", reason, size)) {
+        unlink(metadata_path);
+        return 0;
+    }
+    clamav_quarantine_audit("quarantine-pending", id, metadata->component,
+                            source_path, reason, 1);
+    return 1;
 }
 
 static int valid_id(const char *id)
@@ -372,14 +405,17 @@ static int read_entry(const char *id, const char *metadata_path,
     struct json_object *value;
     struct stat status;
     char payload[PATH_MAX];
+    char resolved_metadata[PATH_MAX];
+    int pending;
     object = json_object_from_file(metadata_path);
-    if (object == NULL || !entry_paths(id, payload, entry->source)
-            || lstat(payload, &status) != 0 || !S_ISREG(status.st_mode)) {
+    if (object == NULL || !entry_paths(id, payload, resolved_metadata)) {
         if (object != NULL)
             json_object_put(object);
         return 0;
     }
     memset(entry, 0, sizeof(*entry));
+    pending = strcmp(json_string(object, "state"), "pending") == 0;
+    entry->payload_available = lstat(payload, &status) == 0 && S_ISREG(status.st_mode);
     snprintf(entry->id, sizeof(entry->id), "%s", id);
     if (json_string(object, "component")[0] != '\0')
         snprintf(entry->component, sizeof(entry->component), "%s", json_string(object, "component"));
@@ -393,12 +429,20 @@ static int read_entry(const char *id, const char *metadata_path,
         snprintf(entry->source, sizeof(entry->source), "%s", json_string(object, "source"));
     snprintf(entry->detection, sizeof(entry->detection), "%s", json_string(object, "detection"));
     snprintf(entry->sha256, sizeof(entry->sha256), "%s", json_string(object, "sha256"));
-    entry->size = (long long)status.st_size;
+    snprintf(entry->quarantine_reason, sizeof(entry->quarantine_reason), "%s", json_string(object, "quarantine_reason"));
+    if (entry->payload_available)
+        entry->size = (long long)status.st_size;
+    else if (json_object_object_get_ex(object, "size", &value)
+            && json_object_is_type(value, json_type_int))
+        entry->size = (long long)json_object_get_int64(value);
+    else
+        entry->size = -1;
+    entry->source_available = access(entry->source, F_OK) == 0;
     if (json_object_object_get_ex(object, "created", &value)
             && json_object_is_type(value, json_type_int))
         entry->created = (long long)json_object_get_int64(value);
     json_object_put(object);
-    return 1;
+    return entry->payload_available || pending;
 }
 
 int clamav_quarantine_list(struct clamav_quarantine_entry **entries, size_t *count)
@@ -452,8 +496,43 @@ static int delete_entry(const char *id, const char *action)
 {
     char payload[PATH_MAX];
     char metadata[PATH_MAX];
+    struct json_object *object;
+    const char *state;
+    const char *source;
+    const char *component;
     if (!entry_paths(id, payload, metadata))
         return 0;
+    object = json_object_from_file(metadata);
+    if (object == NULL)
+        return 0;
+    state = json_string(object, "state");
+    source = json_string(object, "source");
+    component = json_string(object, "component");
+    if (strcmp(state, "pending") == 0) {
+        struct stat status;
+        if (lstat(source, &status) == 0) {
+            if (!S_ISREG(status.st_mode) || unlink(source) != 0) {
+                json_object_put(object);
+                clamav_quarantine_audit(action, id, component, source,
+                                        "original could not be deleted", 0);
+                return 0;
+            }
+        } else if (errno != ENOENT) {
+            json_object_put(object);
+            clamav_quarantine_audit(action, id, component, source,
+                                    "original could not be inspected", 0);
+            return 0;
+        }
+        if (unlink(metadata) != 0) {
+            json_object_put(object);
+            return 0;
+        }
+        clamav_quarantine_audit(action, id, component, source,
+                                "original deleted or already absent", 1);
+        json_object_put(object);
+        return 1;
+    }
+    json_object_put(object);
     if (unlink(payload) != 0)
         return 0;
     if (unlink(metadata) != 0) {

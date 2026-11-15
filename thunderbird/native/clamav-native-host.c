@@ -401,6 +401,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     int used_clamd;
     int result;
     int quarantined = 0;
+    int quarantine_pending = 0;
     char quarantine_path[PATH_MAX];
     char quarantine_id[CLAMAV_QUARANTINE_ID_LENGTH];
     struct clamav_quarantine_metadata quarantine_metadata;
@@ -491,8 +492,13 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
             if (stat(path, &status) == 0
                     && status.st_size >= 0
                     && (unsigned long long)status.st_size > clamav_quarantine_max_file_size()) {
+                quarantine_pending = clamav_quarantine_record_pending(
+                    path, &quarantine_metadata,
+                    "File exceeds the local quarantine size limit", quarantine_id);
                 size_t old_length = strlen(message);
-                const char *notice = "\n\nQuarantine skipped: file is larger than the quarantine limit";
+                const char *notice = quarantine_pending
+                    ? "\n\nQuarantine skipped: file is larger than the quarantine limit; it remains at the original path"
+                    : "\n\nQuarantine skipped: file is larger than the quarantine limit";
                 char *expanded = (char *)realloc(message, old_length + strlen(notice) + 1);
                 if (expanded != NULL) {
                     message = expanded;
@@ -501,6 +507,10 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
             } else {
                 quarantined = clamav_quarantine_store(path, &quarantine_metadata, 1,
                                                       quarantine_id, quarantine_path);
+                if (!quarantined)
+                    quarantine_pending = clamav_quarantine_record_pending(
+                        path, &quarantine_metadata,
+                        "The local quarantine copy could not be completed", quarantine_id);
             }
         }
         if (quarantined) {
@@ -526,6 +536,8 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     json_object_object_add(response, "sha256", json_object_new_string(sha256));
     if (quarantine && result == 1)
         json_object_object_add(response, "quarantined", json_object_new_boolean(quarantined));
+    if (quarantine && result == 1)
+        json_object_object_add(response, "quarantine_pending", json_object_new_boolean(quarantine_pending));
     if (quarantined)
         json_object_object_add(response, "quarantine_path", json_object_new_string(quarantine_path));
     free(message);

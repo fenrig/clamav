@@ -315,15 +315,18 @@ private:
         else
             pathLabel->setText(tr("Location unavailable"));
         if (!clamav_quarantine_list(&entries, &count)) {
-            updateStatusHeader(0, 0, 0);
+            updateStatusHeader(0, 0, 0, 0);
             QMessageBox::warning(this, tr("Quarantine"), tr("Unable to read the quarantine directory."));
             return;
         }
         size_t serious = 0;
         size_t review = 0;
         size_t tests = 0;
+        size_t pending = 0;
         for (size_t i = 0; i < count; ++i) {
             const auto &entry = entries[i];
+            if (!entry.payload_available)
+                ++pending;
             switch (threatLevel(QString::fromLocal8Bit(entry.detection))) {
             case 1:
                 ++tests;
@@ -348,8 +351,12 @@ private:
             detectionItem->setData(Qt::UserRole + 3, QString::fromLocal8Bit(entry.source));
             detectionItem->setData(Qt::UserRole + 4, QString::fromLatin1(entry.sha256));
             detectionItem->setData(Qt::UserRole + 5, entry.created);
+            detectionItem->setData(Qt::UserRole + 6, entry.payload_available);
+            detectionItem->setData(Qt::UserRole + 7, QString::fromLocal8Bit(entry.quarantine_reason));
             table->setItem(row, 0, detectionItem);
-            auto *componentItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.component));
+            const QString component = QString::fromLocal8Bit(entry.component);
+            auto *componentItem = new QTableWidgetItem(entry.payload_available
+                ? component : tr("%1 · original not copied").arg(component));
             auto *dateItem = new QTableWidgetItem(entry.created > 0
                 ? QDateTime::fromSecsSinceEpoch(entry.created).toString(QStringLiteral("yyyy-MM-dd HH:mm"))
                 : QString());
@@ -360,7 +367,7 @@ private:
             table->setItem(row, 2, dateItem);
         }
         clamav_quarantine_list_free(entries);
-        updateStatusHeader(serious, review, tests);
+        updateStatusHeader(serious, review, tests, pending);
         table->setSortingEnabled(true);
         table->sortItems(2, Qt::DescendingOrder);
         table->clearSelection();
@@ -380,9 +387,13 @@ private:
         return QObject::tr("%1 GiB").arg(size / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
     }
 
-    void updateStatusHeader(size_t serious, size_t review, size_t tests)
+    void updateStatusHeader(size_t serious, size_t review, size_t tests, size_t pending)
     {
-        if (serious > 0) {
+        if (pending > 0) {
+            statusHeaderTitle->setText(tr("Action required"));
+            statusHeaderDetails->setText(tr("%1 detection(s) could not be copied into the local quarantine. The original file remains at its source path; review the entry and delete it if appropriate.").arg(pending));
+            setStatusHeader(QStringLiteral("dialog-error"), QColor(210, 55, 65));
+        } else if (serious > 0) {
             statusHeaderTitle->setText(tr("Action recommended"));
             statusHeaderDetails->setText(tr("%1 serious detection(s) are quarantined. Keep them isolated and review or delete them before continuing.").arg(serious));
             setStatusHeader(QStringLiteral("dialog-error"), QColor(210, 55, 65));
@@ -440,8 +451,15 @@ private:
     void updateActionButtons()
     {
         const int selected = selectedRows().size();
-        restoreButton->setEnabled(selected > 0);
+        bool allPayloadsAvailable = selected > 0;
+        for (const int row : selectedRows())
+            allPayloadsAvailable = allPayloadsAvailable
+                && table->item(row, 0)->data(Qt::UserRole + 6).toBool();
+        restoreButton->setEnabled(allPayloadsAvailable);
         deleteButton->setEnabled(selected > 0);
+        deleteButton->setText(selected == 1
+            && !table->item(table->currentRow(), 0)->data(Qt::UserRole + 6).toBool()
+            ? tr("Delete original") : tr("Delete permanently"));
         lookupButton->setEnabled(selected == 1);
         virusTotalButton->setEnabled(selected == 1 && itemHashIsValid());
     }
@@ -497,7 +515,12 @@ private:
             "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
             "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
             .arg(tint.red()).arg(tint.green()).arg(tint.blue()));
-        descriptionLabel->setText(localDescription(report));
+        const bool payloadAvailable = item->data(Qt::UserRole + 6).toBool();
+        const QString reason = item->data(Qt::UserRole + 7).toString();
+        descriptionLabel->setText(payloadAvailable
+            ? localDescription(report)
+            : tr("This detection was recorded, but the file was not copied into the local quarantine%1. The original remains at the source path. Use “Delete original” only if you want to remove it permanently.")
+                .arg(reason.isEmpty() ? QString() : tr(" (%1)").arg(reason)));
         details->setPlainText(report);
     }
 
@@ -548,9 +571,14 @@ private:
         const QList<int> rows = selectedRows();
         if (rows.isEmpty())
             return;
+        bool hasPending = false;
+        for (const int row : rows)
+            hasPending = hasPending || !table->item(row, 0)->data(Qt::UserRole + 6).toBool();
         const QString prompt = rows.size() == 1
-            ? tr("Delete this quarantined file permanently?")
-            : tr("Delete %1 quarantined files permanently?").arg(rows.size());
+            ? (hasPending ? tr("Delete the original file permanently? This cannot be undone.")
+                          : tr("Delete this quarantined file permanently?"))
+            : (hasPending ? tr("Delete %1 selected files or their original paths permanently?").arg(rows.size())
+                          : tr("Delete %1 quarantined files permanently?").arg(rows.size()));
         if (QMessageBox::question(this, tr("Delete quarantined files"), prompt) != QMessageBox::Yes)
             return;
         int failures = 0;
@@ -568,7 +596,7 @@ private:
     {
         if (table->rowCount() == 0
                 || QMessageBox::warning(this, tr("Delete all quarantined files"),
-                    tr("Delete every quarantined file permanently? This cannot be undone."),
+                tr("Delete every quarantined file and every recorded original permanently? This cannot be undone."),
                     QMessageBox::Cancel | QMessageBox::Yes, QMessageBox::Cancel) != QMessageBox::Yes)
             return;
         QStringList ids;

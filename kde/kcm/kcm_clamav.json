@@ -3,9 +3,9 @@
         "Name": "ClamAV",
         "Description": "Monitor and configure ClamAV services",
         "Icon": "clamav",
-        "ServiceTypes": ["KCModule"],
-        "X-KDE-ParentApp": "systemsettings",
-        "X-KDE-System-Settings-Parent-Category": "system-administration",
-        "X-KDE-Keywords": "antivirus,virus scan,clamd,freshclam,malware"
-    }
+        "ServiceTypes": ["KCModule"]
+    },
+    "X-KDE-ParentApp": "systemsettings",
+    "X-KDE-System-Settings-Parent-Category": "system-administration",
+    "X-KDE-Keywords": "antivirus,virus,virus scan,malware,threat protection,quarantine,clamav,clamd,freshclam,on-access,security"
 }

@@ -9,7 +9,7 @@ static int scan_status;
 
 static void scan_one(const char *path)
 {
-    struct json_object *result = scan_file(path, 1);
+    struct json_object *result = scan_file(path, 1, "plasma");
     struct json_object *value;
     const char *message = "Scan failed";
 

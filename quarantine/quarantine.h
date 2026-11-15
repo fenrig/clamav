@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 struct clamav_quarantine_metadata {
+    const char *component;
     const char *original_name;
     const char *source;
     const char *detection;
@@ -21,6 +22,7 @@ struct clamav_quarantine_metadata {
 
 struct clamav_quarantine_entry {
     char id[CLAMAV_QUARANTINE_ID_LENGTH];
+    char component[64];
     char original_name[PATH_MAX];
     char source[PATH_MAX];
     char detection[PATH_MAX];

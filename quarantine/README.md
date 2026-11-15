@@ -8,6 +8,9 @@ The store is located under `$XDG_DATA_HOME/clamav/quarantine`, or
 are mode `0700`; payload and metadata files are mode `0600`. Payloads receive
 opaque random identifiers and are never stored with their original filename.
 
-The current API stores a scanned file and records metadata atomically. Move
-and copy semantics are selected by the caller. Listing, restore, and deletion
-operations will use the same format for the Qt/KF6 quarantine manager.
+The current API stores a scanned file and records metadata atomically. Metadata
+includes the originating component (`firefox`, `thunderbird`, or `plasma`),
+the original filename, the source path, the detection, the SHA-256, and the
+quarantine timestamp. Move and copy semantics are selected by the caller.
+The Qt/KF6-compatible manager displays these fields and supports listing,
+restore, and deletion.

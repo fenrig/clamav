@@ -364,7 +364,7 @@ static char *replace_text(const char *text, const char *needle, const char *repl
     return result;
 }
 
-static struct json_object *scan_file(const char *path, int quarantine)
+static struct json_object *scan_file(const char *path, int quarantine, const char *component)
 {
     char sha256[65];
     char *output = NULL;
@@ -455,8 +455,9 @@ static struct json_object *scan_file(const char *path, int quarantine)
         return response;
     }
     if (quarantine && result == 1) {
+        quarantine_metadata.component = component;
         quarantine_metadata.original_name = display_name;
-        quarantine_metadata.source = "clamav-native-host";
+        quarantine_metadata.source = path;
         quarantine_metadata.detection = details;
         quarantine_metadata.sha256 = sha256;
         quarantined = clamav_quarantine_store(path, &quarantine_metadata, 1,
@@ -500,9 +501,11 @@ int main(void)
     struct json_object *request;
     struct json_object *path_object;
     struct json_object *quarantine_object;
+    struct json_object *component_object;
     struct json_object *response;
     const char *path;
     int quarantine;
+    const char *component;
 
     signal(SIGPIPE, SIG_IGN);
     for (;;) {
@@ -533,10 +536,14 @@ int main(void)
         } else {
             path = json_object_get_string(path_object);
             quarantine = 0;
+            component = "unknown";
             if (json_object_object_get_ex(request, "quarantine", &quarantine_object)
                     && json_object_is_type(quarantine_object, json_type_boolean))
                 quarantine = json_object_get_boolean(quarantine_object);
-            response = scan_file(path, quarantine);
+            if (json_object_object_get_ex(request, "component", &component_object)
+                    && json_object_is_type(component_object, json_type_string))
+                component = json_object_get_string(component_object);
+            response = scan_file(path, quarantine, component);
         }
         if (request != NULL)
             json_object_put(request);

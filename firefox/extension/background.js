@@ -34,7 +34,7 @@ function pumpNativeQueue() {
   }
   nativeCurrent = nativeQueue.shift();
   try {
-    nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine });
+      nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine, component: "firefox" });
   } catch (error) {
     const request = nativeCurrent;
     nativeCurrent = null;

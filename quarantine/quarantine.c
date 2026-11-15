@@ -110,6 +110,7 @@ static int write_metadata(const char *path, const char *id,
         return 0;
     object = json_object_new_object();
     json_object_object_add(object, "version", json_object_new_int(1));
+    json_object_object_add(object, "component", json_object_new_string(metadata->component ? metadata->component : "unknown"));
     json_object_object_add(object, "original_name", json_object_new_string(metadata->original_name ? metadata->original_name : ""));
     json_object_object_add(object, "source", json_object_new_string(metadata->source ? metadata->source : "unknown"));
     json_object_object_add(object, "detection", json_object_new_string(metadata->detection ? metadata->detection : "unknown"));
@@ -223,6 +224,7 @@ static int read_entry(const char *id, const char *metadata_path,
     }
     memset(entry, 0, sizeof(*entry));
     snprintf(entry->id, sizeof(entry->id), "%s", id);
+    snprintf(entry->component, sizeof(entry->component), "%s", json_string(object, "component"));
     snprintf(entry->original_name, sizeof(entry->original_name), "%s", json_string(object, "original_name"));
     snprintf(entry->source, sizeof(entry->source), "%s", json_string(object, "source"));
     snprintf(entry->detection, sizeof(entry->detection), "%s", json_string(object, "detection"));

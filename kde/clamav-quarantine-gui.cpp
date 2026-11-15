@@ -29,9 +29,9 @@ public:
         restoreButton = new QPushButton(tr("Restore…"), this);
         deleteButton = new QPushButton(tr("Delete permanently"), this);
 
-        table->setColumnCount(5);
-        table->setHorizontalHeaderLabels({tr("Detection"), tr("Original name"),
-                                          tr("Source"), tr("SHA-256"), tr("Created")});
+        table->setColumnCount(6);
+        table->setHorizontalHeaderLabels({tr("Detection"), tr("Component"), tr("Original name"),
+                                          tr("Source path"), tr("SHA-256"), tr("Created")});
         table->setSelectionBehavior(QAbstractItemView::SelectRows);
         table->setSelectionMode(QAbstractItemView::SingleSelection);
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -85,10 +85,11 @@ private:
             const int row = table->rowCount();
             table->insertRow(row);
             table->setItem(row, 0, new QTableWidgetItem(QString::fromLocal8Bit(entry.detection)));
-            table->setItem(row, 1, new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name)));
-            table->setItem(row, 2, new QTableWidgetItem(QString::fromLocal8Bit(entry.source)));
-            table->setItem(row, 3, new QTableWidgetItem(QString::fromLatin1(entry.sha256)));
-            table->setItem(row, 4, new QTableWidgetItem(entry.created > 0
+            table->setItem(row, 1, new QTableWidgetItem(QString::fromLocal8Bit(entry.component)));
+            table->setItem(row, 2, new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name)));
+            table->setItem(row, 3, new QTableWidgetItem(QString::fromLocal8Bit(entry.source)));
+            table->setItem(row, 4, new QTableWidgetItem(QString::fromLatin1(entry.sha256)));
+            table->setItem(row, 5, new QTableWidgetItem(entry.created > 0
                 ? QDateTime::fromSecsSinceEpoch(entry.created).toString(Qt::TextDate)
                 : tr("Unknown")));
             table->item(row, 0)->setData(Qt::UserRole, QString::fromLatin1(entry.id));

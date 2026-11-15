@@ -18,6 +18,8 @@
 
 namespace {
 const QString clamdConfig = QStringLiteral(CLAMAV_CONF_DIR) + QStringLiteral("/clamd.conf");
+const QString freshclamConfig = QStringLiteral(CLAMAV_CONF_DIR) + QStringLiteral("/freshclam.conf");
+const QString freshclamSample = QStringLiteral(CLAMAV_CONF_DIR) + QStringLiteral("/freshclam.conf.sample");
 const QString freshclamTimerOverride = QStringLiteral("/etc/systemd/system/clamav-freshclam-once.timer.d/override.conf");
 
 bool safeValue(const QString &value)
@@ -113,6 +115,23 @@ bool writeScalar(const QString &key, const QString &value)
     return output.commit();
 }
 
+bool initializeFreshclam()
+{
+    if (QFile::exists(freshclamConfig))
+        return true;
+    QFile input(freshclamSample);
+    if (!input.open(QIODevice::ReadOnly))
+        return false;
+    QSaveFile output(freshclamConfig);
+    if (!output.open(QIODevice::WriteOnly) || output.write(input.readAll()) < 0)
+        return false;
+    if (!output.commit())
+        return false;
+    return QFile::setPermissions(freshclamConfig,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+        | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+}
+
 bool writePaths(const QString &key, const QStringList &values)
 {
     if (key != QStringLiteral("OnAccessIncludePath") && key != QStringLiteral("OnAccessExcludePath")
@@ -172,6 +191,8 @@ int main(int argc, char **argv)
         return writeScalar(args[2], args[3]) ? 0 : 1;
     if (args[1] == QStringLiteral("write-paths") && args.size() >= 3)
         return writePaths(args[2], args.mid(3)) ? 0 : 1;
+    if (args[1] == QStringLiteral("initialize-freshclam") && args.size() == 2)
+        return initializeFreshclam() ? 0 : 1;
     if (args[1] == QStringLiteral("timer-set") && args.size() == 4) {
         if (!writeTimerOverride(args[2], args[3]))
             return 1;

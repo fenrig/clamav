@@ -5,6 +5,7 @@
 #include "quarantine.h"
 
 #include <QCheckBox>
+#include <QColor>
 #include <QFile>
 #include <QFileSystemWatcher>
 #include <QFileInfo>
@@ -238,21 +239,40 @@ public:
 
         healthBanner = new QFrame(widget());
         healthBanner->setObjectName(QStringLiteral("healthBanner"));
-        auto *healthLayout = new QVBoxLayout(healthBanner);
+        auto *healthLayout = new QHBoxLayout(healthBanner);
         healthLayout->setContentsMargins(16, 12, 16, 12);
+        auto *healthText = new QVBoxLayout;
         healthTitle = new QLabel(healthBanner);
         healthTitle->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600; color: palette(window-text);"));
         healthDetails = new QLabel(healthBanner);
         healthDetails->setWordWrap(true);
         healthDetails->setStyleSheet(QStringLiteral("color: palette(window-text);"));
-        healthLayout->addWidget(healthTitle);
-        healthLayout->addWidget(healthDetails);
+        healthText->addWidget(healthTitle);
+        healthText->addWidget(healthDetails);
+        healthLayout->addLayout(healthText, 1);
+        healthAction = new QPushButton(healthBanner);
+        healthAction->setIcon(QIcon::fromTheme(QStringLiteral("go-next")));
+        connect(healthAction, &QPushButton::clicked, this, [this, tabs] {
+            if (healthActionType == 1)
+                startDaemon();
+            else if (healthActionType == 2)
+                setupFreshclam();
+            else if (healthActionType == 3)
+                enableOnAccess();
+            else if (healthActionType == 4)
+                openQuarantine();
+            else
+                tabs->setCurrentIndex(0);
+        });
+        healthLayout->addWidget(healthAction);
         overviewLayout->addWidget(healthBanner);
 
         auto *overview = new QGridLayout;
         overview->setHorizontalSpacing(10);
         overview->setVerticalSpacing(10);
-        const auto addOverviewCard = [overview](const QString &title, int row, int column) {
+        const auto addOverviewCard = [overview](const QString &title, int row, int column,
+                                                QFrame **cardOutput, QLabel **valueOutput,
+                                                QPushButton **actionOutput, const QString &actionText) {
             auto *card = new QFrame;
             card->setObjectName(QStringLiteral("overviewCard"));
             auto *cardLayout = new QVBoxLayout(card);
@@ -264,18 +284,33 @@ public:
             value->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
             cardLayout->addWidget(heading);
             cardLayout->addWidget(value);
+            QPushButton *action = nullptr;
+            if (!actionText.isEmpty()) {
+                action = new QPushButton(actionText, card);
+                action->setIcon(QIcon::fromTheme(QStringLiteral("go-next")));
+                action->setVisible(false);
+                cardLayout->addWidget(action);
+            }
             overview->addWidget(card, row, column);
+            *cardOutput = card;
+            *valueOutput = value;
+            if (actionOutput)
+                *actionOutput = action;
             return value;
         };
-        engineOverview = addOverviewCard(i18n("Antivirus"), 0, 0);
-        updatesOverview = addOverviewCard(i18n("Database updates"), 0, 1);
-        databaseOverview = addOverviewCard(i18n("Virus database"), 0, 2);
-        onAccessOverview = addOverviewCard(i18n("On-access protection"), 1, 0);
-        quarantineOverview = addOverviewCard(i18n("Quarantine"), 1, 1);
+        addOverviewCard(i18n("Antivirus"), 0, 0, &engineCard, &engineOverview, &engineAction, i18n("Start service"));
+        addOverviewCard(i18n("Database updates"), 0, 1, &updatesCard, &updatesOverview, &updatesAction, i18n("Set up updates"));
+        addOverviewCard(i18n("Virus database"), 0, 2, &databaseCard, &databaseOverview, nullptr, {});
+        addOverviewCard(i18n("On-access protection"), 1, 0, &onAccessCard, &onAccessOverview, &onAccessAction, i18n("Enable protection"));
+        addOverviewCard(i18n("Quarantine"), 1, 1, &quarantineCard, &quarantineOverview, &quarantineAction, i18n("Open quarantine"));
         auto *overviewSpacer = new QWidget(widget());
         overviewSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         overview->addWidget(overviewSpacer, 1, 2);
         overviewLayout->addLayout(overview);
+        connect(engineAction, &QPushButton::clicked, this, &ClamavKCM::startDaemon);
+        connect(updatesAction, &QPushButton::clicked, this, &ClamavKCM::setupFreshclam);
+        connect(onAccessAction, &QPushButton::clicked, this, &ClamavKCM::enableOnAccess);
+        connect(quarantineAction, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
 
         auto *statusBox = new QGroupBox(i18n("Status"), widget());
         auto *status = new QFormLayout(statusBox);
@@ -383,8 +418,8 @@ public:
         statusTimer->setInterval(30000);
         connect(statusTimer, &QTimer::timeout, this, &ClamavKCM::refreshStatus);
         statusTimer->start();
-        refreshStatus();
         load();
+        refreshStatus();
     }
 
     void load() override
@@ -453,7 +488,11 @@ public:
 private:
     QFrame *healthBanner;
     QLabel *healthTitle, *healthDetails;
+    QPushButton *healthAction;
+    int healthActionType = 0;
+    QFrame *engineCard, *updatesCard, *databaseCard, *onAccessCard, *quarantineCard;
     QLabel *engineOverview, *updatesOverview, *databaseOverview, *onAccessOverview, *quarantineOverview;
+    QPushButton *engineAction, *updatesAction, *onAccessAction, *quarantineAction;
     QLabel *clamdStatus, *freshclamStatus, *onAccessStatus, *timerStatus, *databaseStatus;
     QPlainTextEdit *stats;
     QCheckBox *lazyLoading, *heuristicAlerts, *heuristicPrecedence, *onAccessPrevention;
@@ -533,6 +572,39 @@ private:
         button->setMinimumHeight(34);
         layout->addWidget(button, position / 3, position % 3);
     }
+    static void setCardState(QFrame *card, const QColor &color)
+    {
+        card->setStyleSheet(QStringLiteral(
+            "QFrame#overviewCard { background: rgba(%1, %2, %3, 42); border: 1px solid rgba(%1, %2, %3, 150); border-radius: 8px; }")
+            .arg(color.red()).arg(color.green()).arg(color.blue()));
+    }
+    void startDaemon()
+    {
+        if (!runHelper({QStringLiteral("service"), QStringLiteral("enable"), QStringLiteral("clamav-daemon.service")}))
+            return;
+        runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-daemon.service")});
+        refreshStatus();
+    }
+    void setupFreshclam()
+    {
+        if (!runHelper({QStringLiteral("initialize-freshclam")}))
+            return;
+        if (!runHelper({QStringLiteral("service"), QStringLiteral("enable"), QStringLiteral("clamav-freshclam-once.timer")}))
+            return;
+        runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-freshclam-once.timer")});
+        refreshStatus();
+    }
+    void enableOnAccess()
+    {
+        if (!runHelper({QStringLiteral("write-clamd"), QStringLiteral("OnAccessPrevention"), QStringLiteral("yes")}))
+            return;
+        if (!runHelper({QStringLiteral("service"), QStringLiteral("enable"), QStringLiteral("clamav-clamonacc.service")}))
+            return;
+        runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-clamonacc.service")});
+        runHelper({QStringLiteral("service"), QStringLiteral("reload"), QStringLiteral("clamav-daemon.service")});
+        load();
+        refreshStatus();
+    }
     void openQuarantine()
     {
         if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
@@ -569,7 +641,8 @@ private:
         const bool updatesRunning = freshclam == QStringLiteral("active") || timer == QStringLiteral("active");
         const bool databaseReady = databaseAvailable();
         const bool onAccessRunning = onAccess == QStringLiteral("active");
-        const bool onAccessConfigured = serviceEnabled(QStringLiteral("clamav-clamonacc.service")) == QStringLiteral("enabled");
+        const bool onAccessConfigured = onAccessPrevention->isChecked();
+        const bool freshclamInitialized = QFile::exists(configDir + QStringLiteral("/freshclam.conf"));
         char quarantinePath[PATH_MAX];
         struct clamav_quarantine_entry *entries = nullptr;
         size_t quarantineItems = 0;
@@ -604,13 +677,45 @@ private:
         else
             quarantineOverview->setText(i18n("No items to review"));
 
-        if (!daemonRunning || !databaseReady) {
+        const QColor green(80, 170, 100);
+        const QColor yellow(220, 170, 30);
+        const QColor red(210, 55, 65);
+        setCardState(engineCard, daemonRunning ? green : red);
+        setCardState(databaseCard, databaseReady ? green : red);
+        setCardState(updatesCard, !freshclamInitialized ? red : (updatesRunning ? green : yellow));
+        setCardState(onAccessCard, onAccessRunning ? green : (onAccessConfigured ? red : yellow));
+        setCardState(quarantineCard, quarantineSerious > 0 ? red : (quarantineReview > 0 ? yellow : green));
+        engineAction->setVisible(!daemonRunning);
+        engineAction->setText(serviceEnabled(QStringLiteral("clamav-daemon.service")) == QStringLiteral("enabled")
+            ? i18n("Start now") : i18n("Enable and start"));
+        updatesAction->setVisible(!freshclamInitialized || !updatesRunning);
+        updatesAction->setText(!freshclamInitialized ? i18n("Initialize FreshClam") : i18n("Enable updates"));
+        onAccessAction->setVisible(!onAccessRunning);
+        onAccessAction->setText(onAccessConfigured ? i18n("Start protection") : i18n("Enable and start"));
+        quarantineAction->setVisible(quarantineItems > 0);
+
+        healthAction->setVisible(true);
+        if (!daemonRunning) {
             healthTitle->setText(i18n("Attention needed"));
-            healthDetails->setText(!daemonRunning
-                ? i18n("The ClamAV scanning service is not running. Start it from Quick actions or check the service configuration.")
-                : i18n("The virus database is unavailable. Update the database before relying on scans."));
+            healthDetails->setText(i18n("The ClamAV scanning service is not running. Enable and start it to scan files."));
+            healthAction->setText(i18n("Start ClamAV"));
+            healthActionType = 1;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
-        } else if (quarantineReview > 0 || !onAccessRunning) {
+        } else if (!databaseReady || !freshclamInitialized) {
+            healthTitle->setText(i18n("Database setup needed"));
+            healthDetails->setText(!freshclamInitialized
+                ? i18n("ClamAV is running, but FreshClam has not been initialized. Set up database updates before relying on current protection.")
+                : i18n("ClamAV is running, but its virus database is unavailable. Initialize or update FreshClam."));
+            healthAction->setText(i18n("Set up updates"));
+            healthActionType = 2;
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
+        } else if (onAccessConfigured && !onAccessRunning) {
+            healthTitle->setText(i18n("On-access protection needs attention"));
+            healthDetails->setText(i18n("On-access prevention is enabled in ClamAV configuration, but its service is not running."));
+            healthAction->setText(i18n("Start protection"));
+            healthActionType = 3;
+            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
+        } else if (quarantineSerious > 0 || quarantineReview > 0 || !onAccessRunning || !updatesRunning) {
             healthTitle->setText(i18n("Protection is running"));
             if (quarantineReview > 0) {
                 const QString reviewText = quarantineSerious > 0
@@ -618,17 +723,24 @@ private:
                     : i18n("Potentially unwanted items are quarantined.");
                 healthDetails->setText(i18n("ClamAV is available. %1 On-access protection is %2.", reviewText,
                                             onAccessRunning ? i18n("enabled") : i18n("not enabled")));
+                healthAction->setText(i18n("Review quarantine"));
+                healthActionType = 4;
+            } else if (!updatesRunning) {
+                healthDetails->setText(i18n("ClamAV is available, but automatic virus database updates are not active."));
+                healthAction->setText(i18n("Enable updates"));
+                healthActionType = 2;
             } else {
                 healthDetails->setText(i18n("ClamAV is available. On-access protection is disabled, which is optional but provides less automatic protection."));
+                healthAction->setText(i18n("Enable protection"));
+                healthActionType = 3;
             }
-            healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
-        } else if (!updatesRunning) {
-            healthTitle->setText(i18n("Protection is running"));
-            healthDetails->setText(i18n("Scanning is available, but automatic virus database updates are not active."));
+            healthAction->setVisible(true);
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
         } else {
             healthTitle->setText(i18n("ClamAV is operating normally"));
             healthDetails->setText(i18n("The antivirus service is running, the virus database is available, and automatic updates are active."));
+            healthAction->setVisible(false);
+            healthActionType = 0;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
         }
     }

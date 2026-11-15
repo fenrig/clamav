@@ -27,6 +27,8 @@
 #include <QLocale>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStandardPaths>
+#include <QStorageInfo>
 #include <QTabWidget>
 #include <QTextStream>
 #include <QRegularExpression>
@@ -393,6 +395,14 @@ public:
         quarantine->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
         connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
         addButton(actionLayout, quarantine);
+        auto *scanCommon = new QPushButton(i18n("Scan common folders"), actions);
+        scanCommon->setIcon(QIcon::fromTheme(QStringLiteral("security-high")));
+        connect(scanCommon, &QPushButton::clicked, this, &ClamavKCM::scanCommonFolders);
+        addButton(actionLayout, scanCommon);
+        auto *scanRemovable = new QPushButton(i18n("Scan removable media"), actions);
+        scanRemovable->setIcon(QIcon::fromTheme(QStringLiteral("drive-removable-media")));
+        connect(scanRemovable, &QPushButton::clicked, this, &ClamavKCM::scanRemovableMedia);
+        addButton(actionLayout, scanRemovable);
         auto *refresh = new QPushButton(i18n("Refresh"), actions);
         refresh->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
         connect(refresh, &QPushButton::clicked, this, &ClamavKCM::refreshStatus);
@@ -742,6 +752,58 @@ private:
         if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
             QMessageBox::warning(widget(), i18n("ClamAV"),
                                  i18n("The quarantine manager could not be opened."));
+    }
+    static QStringList commonScanPaths()
+    {
+        QStringList paths;
+        for (const QStandardPaths::StandardLocation location : {
+                 QStandardPaths::DownloadLocation,
+                 QStandardPaths::DesktopLocation,
+                 QStandardPaths::DocumentsLocation}) {
+            const QString path = QStandardPaths::writableLocation(location);
+            if (!path.isEmpty() && QFileInfo(path).isDir() && !paths.contains(path))
+                paths << path;
+        }
+        return paths;
+    }
+    static QStringList removableScanPaths()
+    {
+        QStringList paths;
+        for (const QStorageInfo &volume : QStorageInfo::mountedVolumes()) {
+            if (!volume.isValid() || !volume.isReady() || volume.rootPath() == QStringLiteral("/"))
+                continue;
+            const QString device = QString::fromLocal8Bit(volume.device());
+            if (!device.startsWith(QStringLiteral("/dev/")))
+                continue;
+            QFile removable(QStringLiteral("/sys/class/block/%1/removable")
+                                .arg(QFileInfo(device).fileName()));
+            if (!removable.open(QIODevice::ReadOnly) || removable.readAll().trimmed() != "1")
+                continue;
+            if (!paths.contains(volume.rootPath()))
+                paths << volume.rootPath();
+        }
+        return paths;
+    }
+    void startQuarantineScan(const QStringList &paths, const QString &emptyMessage)
+    {
+        if (paths.isEmpty()) {
+            QMessageBox::information(widget(), i18n("ClamAV"), emptyMessage);
+            return;
+        }
+        if (!QProcess::startDetached(QStringLiteral("clamav-scan-gui"),
+                                     QStringList{QStringLiteral("--quarantine")} + paths))
+            QMessageBox::warning(widget(), i18n("ClamAV"),
+                                 i18n("The scan dialog could not be started."));
+    }
+    void scanCommonFolders()
+    {
+        startQuarantineScan(commonScanPaths(),
+                            i18n("No common user folders were found to scan."));
+    }
+    void scanRemovableMedia()
+    {
+        startQuarantineScan(removableScanPaths(),
+                            i18n("No mounted removable media was found."));
     }
     bool runHelper(const QStringList &arguments)
     {

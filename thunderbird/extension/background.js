@@ -84,6 +84,7 @@ const PHISHING_TAG_KEY = "clamav-phishing";
 const DEFAULT_ACCOUNT = { autoScan: true };
 const DEFAULT_CACHE = { maxEntries: 1000, maxAgeDays: 180 };
 const detections = new Map();
+const scannedDownloads = new Set();
 let libraryScan = null;
 let diagnosticLogging = false;
 
@@ -165,8 +166,12 @@ async function cleanupTemporaryDownloads() {
 cleanupTemporaryDownloads();
 
 async function settings() {
-  const stored = await messenger.storage.local.get(["accounts", "cache"]);
-  return { accounts: stored.accounts || {}, cache: { ...DEFAULT_CACHE, ...(stored.cache || {}) } };
+  const stored = await messenger.storage.local.get(["accounts", "cache", "scanDownloads"]);
+  return {
+    accounts: stored.accounts || {},
+    cache: { ...DEFAULT_CACHE, ...(stored.cache || {}) },
+    scanDownloads: stored.scanDownloads !== false
+  };
 }
 
 async function accountSettings(accountId) {
@@ -262,6 +267,16 @@ async function waitForDownload(downloadId) {
   });
 }
 
+messenger.downloads.onCreated.addListener((download) => {
+  if (download.state === "complete")
+    scanSavedDownload(download.id).catch(error => console.error("ClamAV download scan failed", error));
+});
+
+messenger.downloads.onChanged.addListener((delta) => {
+  if (delta.state?.current === "complete")
+    scanSavedDownload(delta.id).catch(error => console.error("ClamAV download scan failed", error));
+});
+
 async function showResult(result, automatic, attachmentName, quiet = false) {
   if ((automatic || quiet) && !result.infected) return;
   const name = (attachmentName || "attachment").split(/[\\/]/).pop();
@@ -282,6 +297,31 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
     return createNotification(notification, notificationId);
   }
   await createNotification(notification);
+}
+
+function isInternalScanDownload(download) {
+  return /[\\/]clamav-scan[\\/]/.test(download?.filename || "");
+}
+
+async function scanSavedDownload(downloadId) {
+  if (scannedDownloads.has(downloadId)) return;
+  scannedDownloads.add(downloadId);
+  const stored = await settings();
+  if (!stored.scanDownloads) return;
+  const [download] = await messenger.downloads.search({ id: downloadId });
+  if (!download || download.state !== "complete" || !download.filename || isInternalScanDownload(download)) return;
+  try {
+    const result = await scanWithNativeHost(download.filename, true);
+    if (!result || result.success === false)
+      throw new Error(result?.message || "ClamAV could not complete the download scan");
+    await showResult(result, true, download.filename);
+  } catch (error) {
+    await createNotification({
+      type: "basic",
+      title: "ClamAV download scan failed",
+      message: `${download.filename.split(/[\\/]/).pop()}: ${error.message}`
+    });
+  }
 }
 
 function isPhishingResult(result) {

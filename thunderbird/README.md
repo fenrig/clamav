@@ -36,6 +36,9 @@ Thunderbird is closed during a scan, abandoned temporary scan files are cleaned
 up the next time the extension starts.
 Temporary scan files are removed after each scan, including failed scans and
 virus detections. Abandoned files are also cleaned when the extension starts.
+Completed Thunderbird downloads are also scanned automatically by default,
+including attachments or linked files saved to disk. This can be disabled from
+the options page; the extension's own temporary scan downloads are excluded.
 When an attachment is infected, its temporary scan copy is moved to the same
 per-user ClamAV quarantine used by Firefox; the original message is not changed
 unless the user chooses one of the message or attachment deletion actions.

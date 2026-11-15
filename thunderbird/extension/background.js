@@ -4,6 +4,12 @@ const NATIVE_HOST = "org.clamav.thunderbird";
 let nativePort = null;
 let nativeCurrent = null;
 const nativeQueue = [];
+let notificationSequence = 0;
+
+function createNotification(options, notificationId = null) {
+  const id = notificationId || `clamav-${Date.now()}-${++notificationSequence}`;
+  return messenger.notifications.create(id, options);
+}
 
 function pumpNativeQueue() {
   if (nativeCurrent || nativeQueue.length === 0) return;
@@ -271,10 +277,11 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
     iconUrl: messenger.runtime.getURL("logo.svg")
   };
   if (result.infected && result.quarantined) {
-    notification.id = `clamav-quarantine-${Date.now()}`;
+    const notificationId = `clamav-quarantine-${Date.now()}-${++notificationSequence}`;
     notification.message += "\n\nClick this notification to open quarantine.";
+    return createNotification(notification, notificationId);
   }
-  await messenger.notifications.create(notification);
+  await createNotification(notification);
 }
 
 function isPhishingResult(result) {
@@ -436,7 +443,7 @@ async function rescanMessageAttachments(messageId, force = true, quiet = true) {
   try {
     linksScanned = await scanMessageLinks(message.id, message.folder.accountId, false, force, quiet);
   } catch (error) {
-    await messenger.notifications.create({ type: "basic", title: "ClamAV link scan failed", message: error.message });
+    await createNotification({ type: "basic", title: "ClamAV link scan failed", message: error.message });
   }
   const attachments = await messenger.messages.listAttachments(message.id);
   for (const attachment of attachments) {
@@ -501,7 +508,7 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
       logScan("message text scan complete", { messageId, part: key, infected: scan.infected, sha256: scan.sha256 });
       scanned++;
     } catch (error) {
-      await messenger.notifications.create({ type: "basic", title: "ClamAV link scan failed", message: error.message });
+      await createNotification({ type: "basic", title: "ClamAV link scan failed", message: error.message });
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (downloadId !== undefined) await messenger.downloads.removeFile(downloadId).catch(() => {});
@@ -541,7 +548,7 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       }
       return { ok: true };
     } catch (error) {
-      await messenger.notifications.create({
+      await createNotification({
         type: "basic",
         title: "ClamAV could not delete the message",
         message: error.message
@@ -554,7 +561,7 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       await deleteDisplayedAttachments(await displayedMessageId(sender));
       return { ok: true };
     } catch (error) {
-      await messenger.notifications.create({
+      await createNotification({
         type: "basic",
         title: "ClamAV could not delete the attachments",
         message: error.message
@@ -567,13 +574,13 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       const messageId = await displayedMessageId(sender);
       const scanned = await rescanMessageAttachments(messageId, true);
       if (!scanned) {
-        await messenger.notifications.create({
+        await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
           message: "This message has no attachments to scan."
         });
       } else if (!(detections.get(messageId) || []).length) {
-        await messenger.notifications.create({
+        await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
           message: "No viruses or malicious links were found."
@@ -581,7 +588,7 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       }
       return { ok: true };
     } catch (error) {
-      await messenger.notifications.create({
+      await createNotification({
         type: "basic",
         title: "ClamAV scan failed",
         message: error.message
@@ -646,7 +653,7 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
       sha256: result.sha256
     });
   } catch (error) {
-    await messenger.notifications.create({ type: "basic", title: "ClamAV scan failed", message: error.message });
+    await createNotification({ type: "basic", title: "ClamAV scan failed", message: error.message });
   } finally {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     if (downloadId !== undefined) await messenger.downloads.removeFile(downloadId).catch(() => {});
@@ -662,7 +669,7 @@ function collectRealFolders(folder, result = []) {
 
 async function scanFullLibrary() {
   if (libraryScan) {
-    await messenger.notifications.create({
+    await createNotification({
       type: "basic",
       title: "ClamAV library scan already running",
       message: "Use the cancel action in the Tools menu to stop it."
@@ -709,7 +716,7 @@ async function scanFullLibrary() {
       }
     }
     if (scanState.cancelled) throw new Error("Library scan cancelled");
-    await messenger.notifications.create({
+    await createNotification({
       type: "basic",
       title: "ClamAV library scan complete",
       message: detectionsFound
@@ -717,7 +724,7 @@ async function scanFullLibrary() {
         : `Scanned ${messagesScanned} messages and ${partsScanned} attachments or message text parts. No viruses or malicious links were found.`
     });
   } catch (error) {
-    await messenger.notifications.create({
+        await createNotification({
       type: "basic",
       title: scanState.cancelled ? "ClamAV library scan cancelled" : "ClamAV library scan failed",
       message: scanState.cancelled
@@ -763,13 +770,13 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
         page = await messenger.messages.continueList(page.id);
       }
       if (!scanned) {
-        await messenger.notifications.create({
+        await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
           message: "The selected email has no attachments or message text parts to scan."
         });
       } else {
-        await messenger.notifications.create({
+        await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
           message: detectionsFound
@@ -778,7 +785,7 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
         });
       }
     } catch (error) {
-      await messenger.notifications.create({
+      await createNotification({
         type: "basic",
         title: "ClamAV scan failed",
         message: error.message
@@ -813,14 +820,14 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
         page = await messenger.messages.continueList(page.id);
       }
       if (!scanned) {
-        await messenger.notifications.create({
+        await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
           message: "The selected message has no attachments to scan."
         });
       }
     } catch (error) {
-      await messenger.notifications.create({
+      await createNotification({
         type: "basic",
         title: "ClamAV scan failed",
         message: error.message
@@ -842,7 +849,7 @@ messenger.menus.onClicked.addListener(async (info, tab) => {
     await scanAttachment({ ...attachment, messageId }, message.folder.accountId,
       false, info.menuItemId === FORCE_MENU_ID);
   } catch (error) {
-    await messenger.notifications.create({
+    await createNotification({
       type: "basic",
       title: "ClamAV scan failed",
       message: error.message

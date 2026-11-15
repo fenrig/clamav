@@ -431,6 +431,10 @@ private:
             return;
         const QByteArray encoded = QUrl::toPercentEncoding(detection.left(256));
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+") + QString::fromLatin1(encoded)));
+        clamav_quarantine_audit("lookup-web", item->data(Qt::UserRole).toString().toLatin1().constData(),
+                                table->item(table->currentRow(), 1)->text().toLatin1().constData(),
+                                item->data(Qt::UserRole + 3).toString().toLocal8Bit().constData(),
+                                detection.toLocal8Bit().constData(), 1);
     }
 
     void lookupVirusTotal()
@@ -440,6 +444,10 @@ private:
             return;
         const QString hash = item->data(Qt::UserRole + 4).toString().toLower();
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.virustotal.com/gui/file/") + hash + QStringLiteral("/detection")));
+        clamav_quarantine_audit("lookup-virustotal", item->data(Qt::UserRole).toString().toLatin1().constData(),
+                                table->item(table->currentRow(), 1)->text().toLatin1().constData(),
+                                item->data(Qt::UserRole + 3).toString().toLocal8Bit().constData(),
+                                hash.toLatin1().constData(), 1);
     }
 
     QLabel *pathLabel;

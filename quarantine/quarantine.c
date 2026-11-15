@@ -23,6 +23,73 @@ static int make_directory(const char *path)
     return status.st_uid == geteuid();
 }
 
+static int state_log_path(char path[PATH_MAX])
+{
+    const char *state_home = getenv("XDG_STATE_HOME");
+    const char *home = getenv("HOME");
+    char base[PATH_MAX];
+    char clamav[PATH_MAX];
+
+    if (state_home != NULL && state_home[0] != '\0') {
+        if (snprintf(base, sizeof(base), "%s", state_home) >= (int)sizeof(base))
+            return 0;
+    } else if (home != NULL && home[0] != '\0') {
+        if (snprintf(base, sizeof(base), "%s/.local/state", home) >= (int)sizeof(base))
+            return 0;
+    } else {
+        return 0;
+    }
+    if (!make_directory(base)
+            || snprintf(clamav, sizeof(clamav), "%s/clamav", base) >= (int)sizeof(clamav)
+            || !make_directory(clamav)
+            || snprintf(path, PATH_MAX, "%s/quarantine.log", clamav) >= PATH_MAX)
+        return 0;
+    return 1;
+}
+
+int clamav_quarantine_audit(const char *action, const char *id,
+                            const char *component, const char *source,
+                            const char *detail, int success)
+{
+    char path[PATH_MAX];
+    struct json_object *record;
+    const char *text;
+    int fd;
+    ssize_t written;
+    size_t length;
+
+    if (action == NULL || !state_log_path(path))
+        return 0;
+    fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0)
+        return 0;
+    record = json_object_new_object();
+    if (record == NULL) {
+        close(fd);
+        return 0;
+    }
+    json_object_object_add(record, "time", json_object_new_int64((int64_t)time(NULL)));
+    json_object_object_add(record, "action", json_object_new_string(action));
+    json_object_object_add(record, "success", json_object_new_boolean(success));
+    if (id != NULL)
+        json_object_object_add(record, "id", json_object_new_string(id));
+    if (component != NULL)
+        json_object_object_add(record, "component", json_object_new_string(component));
+    if (source != NULL)
+        json_object_object_add(record, "source", json_object_new_string(source));
+    if (detail != NULL)
+        json_object_object_add(record, "detail", json_object_new_string(detail));
+    text = json_object_to_json_string_ext(record, JSON_C_TO_STRING_PLAIN);
+    length = strlen(text);
+    written = write(fd, text, length);
+    if (written == (ssize_t)length)
+        written = write(fd, "\n", 1);
+    fchmod(fd, 0600);
+    close(fd);
+    json_object_put(record);
+    return written == 1;
+}
+
 int clamav_quarantine_path(char path[PATH_MAX])
 {
     const char *data_home = getenv("XDG_DATA_HOME");
@@ -165,6 +232,8 @@ int clamav_quarantine_store(const char *source_path,
             success = 1;
             if (move_file && unlink(source_path) != 0)
                 success = 0;
+            clamav_quarantine_audit("quarantine", id, metadata->component,
+                                    source_path, metadata->detection, success);
         }
     }
     if (destination >= 0)
@@ -304,6 +373,7 @@ int clamav_quarantine_delete(const char *id)
          * gone and will be ignored by the next list operation. */
         return 0;
     }
+    clamav_quarantine_audit("delete", id, NULL, NULL, NULL, 1);
     return 1;
 }
 
@@ -336,5 +406,6 @@ int clamav_quarantine_restore(const char *id, const char *destination_path)
     close(source);
     if (!success)
         unlink(temporary);
+    clamav_quarantine_audit("restore", id, NULL, destination_path, NULL, success);
     return success;
 }

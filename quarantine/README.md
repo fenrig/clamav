@@ -14,3 +14,8 @@ the original filename, the source path, the detection, the SHA-256, and the
 quarantine timestamp. Move and copy semantics are selected by the caller.
 The Qt/KF6-compatible manager displays these fields and supports listing,
 restore, and deletion.
+
+Audit events are appended as JSON Lines to `$XDG_STATE_HOME/clamav/quarantine.log`,
+or `~/.local/state/clamav/quarantine.log`. Each record includes a Unix timestamp,
+action, success flag, quarantine ID when available, component, source, and a
+short detail value. The log is user-owned and mode `0600`; logging is best-effort.

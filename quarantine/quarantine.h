@@ -52,6 +52,12 @@ void clamav_quarantine_list_free(struct clamav_quarantine_entry *entries);
 int clamav_quarantine_restore(const char *id, const char *destination_path);
 int clamav_quarantine_delete(const char *id);
 
+/* Append one audit record as JSON Lines. Logging is best-effort and does not
+ * affect quarantine operations. */
+int clamav_quarantine_audit(const char *action, const char *id,
+                            const char *component, const char *source,
+                            const char *detail, int success);
+
 #ifdef __cplusplus
 }
 #endif

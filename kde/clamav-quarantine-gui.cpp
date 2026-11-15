@@ -126,6 +126,10 @@ public:
         searchBox = new QLineEdit(this);
         searchBox->setPlaceholderText(tr("Search detections, filenames, or components…"));
         statusHeader = new QFrame(this);
+        statusHeader->setObjectName(QStringLiteral("statusHeader"));
+        statusHeaderIcon = new QLabel(statusHeader);
+        statusHeaderIcon->setFixedSize(32, 32);
+        statusHeaderIcon->setAlignment(Qt::AlignCenter);
         statusHeaderTitle = new QLabel(statusHeader);
         statusHeaderDetails = new QLabel(statusHeader);
         componentLabel = new QLabel(tr("Select an item"), this);
@@ -243,12 +247,16 @@ public:
         auto *intro = new QLabel(tr("User quarantine · payloads are never opened by this application"), this);
         intro->setStyleSheet(QStringLiteral("color: palette(mid);"));
         layout->addWidget(intro);
-        auto *statusLayout = new QVBoxLayout(statusHeader);
+        auto *statusLayout = new QHBoxLayout(statusHeader);
         statusLayout->setContentsMargins(16, 12, 16, 12);
-        statusHeaderTitle->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600;"));
+        statusLayout->addWidget(statusHeaderIcon);
+        auto *statusText = new QVBoxLayout;
+        statusHeaderTitle->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600; color: palette(window-text); border: none; background: transparent;"));
         statusHeaderDetails->setWordWrap(true);
-        statusLayout->addWidget(statusHeaderTitle);
-        statusLayout->addWidget(statusHeaderDetails);
+        statusHeaderDetails->setStyleSheet(QStringLiteral("color: palette(window-text); border: none; background: transparent;"));
+        statusText->addWidget(statusHeaderTitle);
+        statusText->addWidget(statusHeaderDetails);
+        statusLayout->addLayout(statusText, 1);
         layout->addWidget(statusHeader);
         layout->addWidget(pathLabel);
         layout->addWidget(splitter, 1);
@@ -366,20 +374,29 @@ private:
         if (serious > 0) {
             statusHeaderTitle->setText(tr("Action recommended"));
             statusHeaderDetails->setText(tr("%1 serious detection(s) are quarantined. Keep them isolated and review or delete them before continuing.").arg(serious));
-            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
+            setStatusHeader(QStringLiteral("dialog-error"), QColor(210, 55, 65));
         } else if (review > 0) {
             statusHeaderTitle->setText(tr("Review recommended"));
             statusHeaderDetails->setText(tr("%1 potentially unwanted item(s) are quarantined. They may be unwanted, but are not necessarily malware.").arg(review));
-            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(220, 170, 30, 45); border: 1px solid rgba(220, 170, 30, 150); border-radius: 8px; }"));
+            setStatusHeader(QStringLiteral("dialog-warning"), QColor(220, 170, 30));
         } else if (tests > 0) {
             statusHeaderTitle->setText(tr("No action required"));
             statusHeaderDetails->setText(tr("Only %1 harmless antivirus test signature(s) are quarantined. EICAR files can be safely deleted.").arg(tests));
-            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
+            setStatusHeader(QStringLiteral("emblem-ok"), QColor(80, 170, 100));
         } else {
             statusHeaderTitle->setText(tr("Quarantine is clear"));
             statusHeaderDetails->setText(tr("No quarantined files need your attention."));
-            statusHeader->setStyleSheet(QStringLiteral("QFrame { background: rgba(80, 170, 100, 45); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"));
+            setStatusHeader(QStringLiteral("emblem-ok"), QColor(80, 170, 100));
         }
+    }
+
+    void setStatusHeader(const QString &iconName, const QColor &color)
+    {
+        statusHeaderIcon->setPixmap(QIcon::fromTheme(iconName).pixmap(28, 28));
+        statusHeader->setStyleSheet(QStringLiteral(
+            "QFrame#statusHeader { background: rgba(%1, %2, %3, 45); border: 1px solid rgba(%1, %2, %3, 150); border-radius: 8px; }"
+            "QFrame#statusHeader QLabel { border: none; background: transparent; color: palette(window-text); }")
+            .arg(color.red()).arg(color.green()).arg(color.blue()));
     }
 
     void filterRows(const QString &text)
@@ -580,6 +597,7 @@ private:
     QTableWidget *table;
     QLineEdit *searchBox;
     QFrame *statusHeader;
+    QLabel *statusHeaderIcon;
     QLabel *statusHeaderTitle;
     QLabel *statusHeaderDetails;
     QPushButton *refreshButton;

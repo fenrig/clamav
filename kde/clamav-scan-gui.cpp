@@ -12,6 +12,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QLocalSocket>
+#include <QMessageBox>
 #include <QProcess>
 #include <QProgressBar>
 #include <QPainter>
@@ -176,6 +177,35 @@ public:
         summary_ = new QLabel(tr("Preparing scan…"), this);
         summary_->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
         layout->addWidget(summary_);
+        statusCard_ = new QFrame(this);
+        statusCard_->setObjectName(QStringLiteral("scanStatusCard"));
+        auto *statusLayout = new QHBoxLayout(statusCard_);
+        statusLayout->setContentsMargins(16, 12, 16, 12);
+        auto *statusText = new QVBoxLayout;
+        statusCardTitle_ = new QLabel(statusCard_);
+        statusCardTitle_->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600; color: palette(window-text);"));
+        statusCardDetails_ = new QLabel(statusCard_);
+        statusCardDetails_->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+        statusCardDetails_->setWordWrap(true);
+        statusText->addWidget(statusCardTitle_);
+        statusText->addWidget(statusCardDetails_);
+        statusLayout->addLayout(statusText, 1);
+        openQuarantineButton_ = new QPushButton(tr("Open quarantine"), statusCard_);
+        openQuarantineButton_->setIcon(QIcon::fromTheme(QStringLiteral("clamav-quarantine"),
+                                                         QIcon::fromTheme(QStringLiteral("folder-open"))));
+        statusLayout->addWidget(openQuarantineButton_);
+        connect(openQuarantineButton_, &QPushButton::clicked, this, [this] {
+            if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
+                QMessageBox::warning(this, tr("ClamAV"), tr("The quarantine manager could not be opened."));
+        });
+        layout->addWidget(statusCard_);
+        pulseTimer_.setInterval(700);
+        connect(&pulseTimer_, &QTimer::timeout, this, [this] {
+            pulseOn_ = !pulseOn_;
+            updateStatusCard();
+        });
+        pulseTimer_.start();
+        updateStatusCard();
         targetSummary_ = new QLabel(this);
         targetSummary_->setText(targetDescription());
         targetSummary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
@@ -239,6 +269,37 @@ public:
     }
 
 private:
+    void updateStatusCard()
+    {
+        const bool running = !finished_;
+        const QColor blue(60, 145, 220);
+        const QColor red(210, 55, 65);
+        const QColor green(80, 170, 100);
+        QColor color = green;
+        QString title = tr("Scan complete");
+        QString details = tr("No threats were found.");
+        if (running && infectionDetected_) {
+            color = red;
+            title = tr("Threat detected");
+            details = tr("A threat was found while scanning continues. Detected files are being isolated where possible.");
+        } else if (running) {
+            color = blue;
+            title = tr("Scan in progress");
+            details = tr("ClamAV is checking the selected targets.");
+        } else if (infectionDetected_) {
+            color = red;
+            title = tr("Threats found");
+            details = tr("Review the scan results and open quarantine to manage isolated files.");
+        }
+        const int alpha = running && pulseOn_ ? 72 : 45;
+        statusCard_->setStyleSheet(QStringLiteral(
+            "QFrame#scanStatusCard { background: rgba(%1, %2, %3, %4); border: 1px solid rgba(%1, %2, %3, 180); border-radius: 8px; }"
+            "QFrame#scanStatusCard QLabel { border: none; background: transparent; }")
+            .arg(color.red()).arg(color.green()).arg(color.blue()).arg(alpha));
+        statusCardTitle_->setText(title);
+        statusCardDetails_->setText(details);
+    }
+
     static QString friendlyActivity(const QString &raw)
     {
         QStringList lines;
@@ -373,6 +434,11 @@ private:
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
             rawOutput_ += QString::fromLocal8Bit(text);
+            if (rawOutput_.contains(QStringLiteral(" FOUND"), Qt::CaseInsensitive)
+                    || rawOutput_.contains(QStringLiteral("A virus was identified"), Qt::CaseInsensitive)) {
+                infectionDetected_ = true;
+                updateStatusCard();
+            }
             output_->setPlainText(friendlyActivity(rawOutput_));
             output_->ensureCursorVisible();
         }
@@ -432,6 +498,7 @@ private:
         statsTimer_.stop();
         updateMetrics();
         finished_ = true;
+        pulseTimer_.stop();
         resultCode_ = cancelled_ ? 130 : (exitCode == 0 ? 0 : exitCode == 1 ? 1 : (exitCode == 0 ? 1 : exitCode));
         progress_->setRange(0, 100);
         progress_->setValue(100);
@@ -451,6 +518,7 @@ private:
         }
         summary_->setText(summary);
         targetSummary_->setText(statusText_);
+        updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
         cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
@@ -483,16 +551,21 @@ private:
     QLabel *statusIcon_ = nullptr;
     QLabel *summary_ = nullptr;
     QLabel *targetSummary_ = nullptr;
+    QFrame *statusCard_ = nullptr;
+    QLabel *statusCardTitle_ = nullptr;
+    QLabel *statusCardDetails_ = nullptr;
+    QPushButton *openQuarantineButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QTextEdit *output_ = nullptr;
     QPushButton *action_ = nullptr;
     QTimer metricsTimer_, statsTimer_;
+    QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
     qint64 cpuSample_ = -1;
     QPair<qint64, qint64> ioSample_ = {-1, -1};
     double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0, ioPeak_ = 0.0;
     qint64 ioTotalRead_ = 0, ioTotalWrite_ = 0;
-    bool cancelled_ = false, finished_ = false;
+    bool cancelled_ = false, finished_ = false, infectionDetected_ = false, pulseOn_ = false;
     int resultCode_ = 130;
 
 public:

@@ -92,17 +92,24 @@ public:
         lookupButton = new QPushButton(tr("Look up detection"), this);
         virusTotalButton = new QPushButton(tr("Open VirusTotal"), this);
 
-        table->setColumnCount(5);
-        table->setHorizontalHeaderLabels({tr("Detection"), tr("Original name"), tr("Component"), tr("Created"), tr("Size")});
+        table->setColumnCount(3);
+        table->setHorizontalHeaderLabels({tr("Original filename"), tr("Detected by"), tr("Date")});
         table->setSelectionBehavior(QAbstractItemView::SelectRows);
         table->setSelectionMode(QAbstractItemView::SingleSelection);
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->setAlternatingRowColors(true);
         table->setSortingEnabled(true);
         table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+        table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
         table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
         table->verticalHeader()->setVisible(false);
+        table->verticalHeader()->setDefaultSectionSize(38);
+        auto listFont = table->font();
+        listFont.setPointSize(listFont.pointSize() + 1);
+        table->setFont(listFont);
+        auto headerFont = table->horizontalHeader()->font();
+        headerFont.setBold(true);
+        table->horizontalHeader()->setFont(headerFont);
         restoreButton->setEnabled(false);
         deleteButton->setEnabled(false);
         deleteAllButton->setEnabled(false);
@@ -218,7 +225,11 @@ private:
             const auto &entry = entries[i];
             const int row = table->rowCount();
             table->insertRow(row);
-            auto *detectionItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.detection).split('\n').value(0));
+            auto *detectionItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name));
+            detectionItem->setToolTip(QString::fromLocal8Bit(entry.detection));
+            auto filenameFont = detectionItem->font();
+            filenameFont.setBold(true);
+            detectionItem->setFont(filenameFont);
             detectionItem->setData(Qt::UserRole, QString::fromLatin1(entry.id));
             detectionItem->setData(Qt::UserRole + 1, QString::fromLocal8Bit(entry.detection));
             detectionItem->setData(Qt::UserRole + 2, QString::fromLocal8Bit(entry.original_name));
@@ -226,14 +237,10 @@ private:
             detectionItem->setData(Qt::UserRole + 4, QString::fromLatin1(entry.sha256));
             detectionItem->setData(Qt::UserRole + 5, entry.created);
             table->setItem(row, 0, detectionItem);
-            auto *nameItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.original_name));
-            nameItem->setData(Qt::UserRole, QString::fromLatin1(entry.id));
-            table->setItem(row, 1, nameItem);
-            table->setItem(row, 2, new QTableWidgetItem(QString::fromLocal8Bit(entry.component)));
-            table->setItem(row, 3, new QTableWidgetItem(entry.created > 0
+            table->setItem(row, 1, new QTableWidgetItem(QString::fromLocal8Bit(entry.component)));
+            table->setItem(row, 2, new QTableWidgetItem(entry.created > 0
                 ? QDateTime::fromSecsSinceEpoch(entry.created).toString(Qt::TextDate)
                 : tr("Unknown")));
-            table->setItem(row, 4, new QTableWidgetItem(formatSize(entry.size)));
         }
         clamav_quarantine_list_free(entries);
         table->setSortingEnabled(true);
@@ -287,7 +294,7 @@ private:
             details->clear();
             return;
         }
-        componentLabel->setText(table->item(row, 2)->text());
+        componentLabel->setText(table->item(row, 1)->text());
         originalLabel->setText(item->data(Qt::UserRole + 2).toString());
         sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
         hashLabel->setText(item->data(Qt::UserRole + 4).toString());

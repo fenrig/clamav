@@ -88,6 +88,7 @@ public:
         refreshButton = new QPushButton(tr("Refresh"), this);
         restoreButton = new QPushButton(tr("Restore…"), this);
         deleteButton = new QPushButton(tr("Delete permanently"), this);
+        deleteAllButton = new QPushButton(tr("Delete all permanently"), this);
         lookupButton = new QPushButton(tr("Look up detection"), this);
         virusTotalButton = new QPushButton(tr("Open VirusTotal"), this);
 
@@ -104,6 +105,7 @@ public:
         table->verticalHeader()->setVisible(false);
         restoreButton->setEnabled(false);
         deleteButton->setEnabled(false);
+        deleteAllButton->setEnabled(false);
         lookupButton->setEnabled(false);
         virusTotalButton->setEnabled(false);
         details->setReadOnly(true);
@@ -165,6 +167,7 @@ public:
         toolbar->addStretch();
         toolbar->addWidget(restoreButton);
         toolbar->addWidget(deleteButton);
+        toolbar->addWidget(deleteAllButton);
         toolbar->addWidget(lookupButton);
         toolbar->addWidget(virusTotalButton);
         layout->addLayout(toolbar);
@@ -180,6 +183,7 @@ public:
         connect(refreshButton, &QPushButton::clicked, this, &QuarantineWindow::refresh);
         connect(restoreButton, &QPushButton::clicked, this, &QuarantineWindow::restore);
         connect(deleteButton, &QPushButton::clicked, this, &QuarantineWindow::remove);
+        connect(deleteAllButton, &QPushButton::clicked, this, &QuarantineWindow::removeAll);
         connect(lookupButton, &QPushButton::clicked, this, &QuarantineWindow::lookupDetection);
         connect(virusTotalButton, &QPushButton::clicked, this, &QuarantineWindow::lookupVirusTotal);
         connect(searchBox, &QLineEdit::textChanged, this, &QuarantineWindow::filterRows);
@@ -234,6 +238,7 @@ private:
         clamav_quarantine_list_free(entries);
         table->setSortingEnabled(true);
         table->clearSelection();
+        deleteAllButton->setEnabled(count > 0);
         updateDetails();
         filterRows(searchBox->text());
     }
@@ -326,6 +331,27 @@ private:
             refresh();
     }
 
+    void removeAll()
+    {
+        if (table->rowCount() == 0
+                || QMessageBox::warning(this, tr("Delete all quarantined files"),
+                    tr("Delete every quarantined file permanently? This cannot be undone."),
+                    QMessageBox::Cancel | QMessageBox::Yes, QMessageBox::Cancel) != QMessageBox::Yes)
+            return;
+        QStringList ids;
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (const auto *item = table->item(row, 0))
+                ids << item->data(Qt::UserRole).toString();
+        int failures = 0;
+        for (const QString &id : ids)
+            if (!clamav_quarantine_delete(id.toLatin1().constData()))
+                ++failures;
+        refresh();
+        if (failures > 0)
+            QMessageBox::warning(this, tr("Delete incomplete"),
+                tr("%1 quarantined file(s) could not be deleted.").arg(failures));
+    }
+
     void lookupDetection()
     {
         const auto *item = table->item(table->currentRow(), 0);
@@ -357,6 +383,7 @@ private:
     QPushButton *refreshButton;
     QPushButton *restoreButton;
     QPushButton *deleteButton;
+    QPushButton *deleteAllButton;
     QPushButton *lookupButton;
     QLabel *componentLabel;
     QLabel *originalLabel;

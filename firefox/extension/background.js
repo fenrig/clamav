@@ -57,10 +57,10 @@ function filename(download) {
 
 async function scanDownload(downloadId) {
   if (scannedDownloads.has(downloadId)) return;
-  scannedDownloads.add(downloadId);
   const items = await browser.downloads.search({ id: downloadId });
   const download = items[0];
-  if (!download || download.state !== "complete" || !download.exists) return;
+  if (!download || download.state !== "complete" || !download.filename) return;
+  scannedDownloads.add(downloadId);
   try {
     const result = await scanWithNativeHost(download.filename, true);
     if (!result || result.success === false) {
@@ -81,6 +81,12 @@ async function scanDownload(downloadId) {
     });
   }
 }
+
+browser.downloads.onCreated.addListener((download) => {
+  if (download.state === "complete") {
+    scanDownload(download.id).catch((error) => console.error("ClamAV download scan failed", error));
+  }
+});
 
 browser.downloads.onChanged.addListener((delta) => {
   if (delta.state?.current === "complete") {

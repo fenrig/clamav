@@ -9,8 +9,10 @@
 #include <QDir>
 #include <QHash>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocalSocket>
@@ -133,6 +135,25 @@ public:
         : KCModule(qobject_cast<QWidget *>(parent), data)
     {
         auto *root = new QVBoxLayout(widget());
+        root->setSpacing(16);
+        auto *header = new QWidget(widget());
+        auto *headerLayout = new QHBoxLayout(header);
+        headerLayout->setContentsMargins(0, 0, 0, 0);
+        auto *headerIcon = new QLabel(header);
+        headerIcon->setPixmap(QIcon::fromTheme(QStringLiteral("clamav")).pixmap(48, 48));
+        headerIcon->setFixedSize(56, 56);
+        headerIcon->setAlignment(Qt::AlignCenter);
+        headerLayout->addWidget(headerIcon);
+        auto *headerText = new QVBoxLayout;
+        auto *title = new QLabel(i18n("ClamAV protection"), header);
+        title->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 600;"));
+        auto *subtitle = new QLabel(i18n("Manage malware scanning, on-access protection, and virus database updates."), header);
+        subtitle->setWordWrap(true);
+        subtitle->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        headerText->addWidget(title);
+        headerText->addWidget(subtitle);
+        headerLayout->addLayout(headerText, 1);
+        root->addWidget(header);
         auto *statusBox = new QGroupBox(i18n("Status"), widget());
         auto *status = new QFormLayout(statusBox);
         clamdStatus = new QLabel;
@@ -152,8 +173,10 @@ public:
         status->addRow(i18n("Scanner statistics:"), stats);
         root->addWidget(statusBox);
 
-        auto *actions = new QGroupBox(i18n("Actions"), widget());
-        auto *actionLayout = new QHBoxLayout(actions);
+        auto *actions = new QGroupBox(i18n("Quick actions"), widget());
+        auto *actionLayout = new QGridLayout(actions);
+        actionLayout->setHorizontalSpacing(8);
+        actionLayout->setVerticalSpacing(8);
         addAction(actionLayout, i18n("Reload database"), "reload", "clamav-daemon.service");
         addAction(actionLayout, i18n("Restart daemon"), "restart", "clamav-daemon.service");
         addAction(actionLayout, i18n("Update database now"), "start", "clamav-freshclam-once.service");
@@ -166,18 +189,24 @@ public:
         addAction(actionLayout, i18n("Disable daily updates"), "disable", "clamav-freshclam-once.timer");
         auto *quarantine = new QPushButton(i18n("Open quarantine"), actions);
         connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
-        actionLayout->addWidget(quarantine);
+        addButton(actionLayout, quarantine);
         auto *refresh = new QPushButton(i18n("Refresh"), actions);
         connect(refresh, &QPushButton::clicked, this, &ClamavKCM::refreshStatus);
-        actionLayout->addWidget(refresh);
+        addButton(actionLayout, refresh);
         applyButton = new QPushButton(i18n("Apply configuration"), actions);
         applyButton->setEnabled(false);
         connect(applyButton, &QPushButton::clicked, this, &ClamavKCM::save);
-        actionLayout->addWidget(applyButton);
+        addButton(actionLayout, applyButton);
         root->addWidget(actions);
 
         auto *settings = new QGroupBox(i18n("Scanner configuration"), widget());
-        auto *form = new QFormLayout(settings);
+        auto *settingsLayout = new QVBoxLayout(settings);
+        auto *settingsIntro = new QLabel(i18n("These options control how ClamAV scans files and how often its virus database is refreshed."), settings);
+        settingsIntro->setWordWrap(true);
+        settingsIntro->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        settingsLayout->addWidget(settingsIntro);
+        auto *form = new QFormLayout;
+        settingsLayout->addLayout(form);
         lazyLoading = new QCheckBox(i18n("Load the database on demand"), settings);
         keepAlive = new QLineEdit(settings);
         heuristicAlerts = new QCheckBox(i18n("Enable heuristic alerts"), settings);
@@ -353,11 +382,17 @@ private:
             configWatcher->addPath(path);
         refreshStatus();
     }
-    void addAction(QHBoxLayout *layout, const QString &label, const QString &action, const QString &unit)
+    void addAction(QGridLayout *layout, const QString &label, const QString &action, const QString &unit)
     {
         auto *button = new QPushButton(label, widget());
         connect(button, &QPushButton::clicked, this, [this, action, unit] { runHelper({QStringLiteral("service"), action, unit}); refreshStatus(); });
-        layout->addWidget(button);
+        addButton(layout, button);
+    }
+    static void addButton(QGridLayout *layout, QPushButton *button)
+    {
+        const int position = layout->count();
+        button->setMinimumHeight(34);
+        layout->addWidget(button, position / 3, position % 3);
     }
     void openQuarantine()
     {

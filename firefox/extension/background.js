@@ -51,6 +51,20 @@ function scanWithNativeHost(path, quarantine = false) {
   });
 }
 
+async function openQuarantine() {
+  try {
+    await browser.runtime.sendNativeMessage(NATIVE_HOST, { command: "open_quarantine" });
+  } catch (error) {
+    console.error("ClamAV: unable to open quarantine manager", error);
+  }
+}
+
+browser.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  if (buttonIndex === 0 && notificationId.startsWith("clamav-quarantine-")) {
+    openQuarantine();
+  }
+});
+
 function filename(download) {
   return download.filename ? download.filename.split(/[\\/]/).pop() : "download";
 }
@@ -66,13 +80,19 @@ async function scanDownload(downloadId) {
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }
-    await browser.notifications.create(`clamav-download-${downloadId}`, {
+    const notification = {
       type: "basic",
       title: result.infected ? "ClamAV: threat detected" : "ClamAV: download clean",
       message: result.infected
         ? `${filename(download)}: ${result.message}`
         : `${filename(download)} was scanned and no viruses were found.`
-    });
+    };
+    let notificationId = `clamav-download-${downloadId}`;
+    if (result.infected && result.quarantined) {
+      notificationId = `clamav-quarantine-${downloadId}`;
+      notification.buttons = [{ title: "Open quarantine" }];
+    }
+    await browser.notifications.create(notificationId, notification);
   } catch (error) {
     await browser.notifications.create(`clamav-download-error-${downloadId}`, {
       type: "basic",

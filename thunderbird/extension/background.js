@@ -50,6 +50,20 @@ function scanWithNativeHost(path, quarantine = false) {
   });
 }
 
+async function openQuarantine() {
+  try {
+    await messenger.runtime.sendNativeMessage(NATIVE_HOST, { command: "open_quarantine" });
+  } catch (error) {
+    console.error("ClamAV: unable to open quarantine manager", error);
+  }
+}
+
+messenger.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  if (buttonIndex === 0 && notificationId.startsWith("clamav-quarantine-")) {
+    openQuarantine();
+  }
+});
+
 const MENU_ID = "clamav-scan-attachment";
 const FORCE_MENU_ID = "clamav-force-scan-attachment";
 const MESSAGE_MENU_ID = "clamav-scan-message-attachments";
@@ -246,7 +260,7 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
   if ((automatic || quiet) && !result.infected) return;
   const name = (attachmentName || "attachment").split(/[\\/]/).pop();
   const phishing = isPhishingResult(result);
-  const notificationId = await messenger.notifications.create({
+  const notification = {
     type: "basic",
     title: result.infected
       ? `${phishing ? "⚠️ Possible phishing link" : "🛑 Virus detected"}: ${name}`
@@ -255,7 +269,12 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
       ? `${phishing ? "This message may be a phishing attack. Do not click its links." : "This attachment was identified as dangerous."}\n\nAttachment: ${name}\n\n${result.message}`
       : `Attachment: ${name}\n\n${result.message}`,
     iconUrl: messenger.runtime.getURL("logo.svg")
-  });
+  };
+  if (result.infected && result.quarantined) {
+    notification.id = `clamav-quarantine-${Date.now()}`;
+    notification.buttons = [{ title: "Open quarantine" }];
+  }
+  await messenger.notifications.create(notification);
 }
 
 function isPhishingResult(result) {

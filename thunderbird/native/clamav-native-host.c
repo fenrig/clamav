@@ -80,6 +80,31 @@ static struct json_object *failure(const char *message, const char *sha256)
     return result;
 }
 
+#ifndef CLAMAV_SCANNER_NO_MAIN
+static int launch_quarantine_manager(void)
+{
+    pid_t child;
+    int status;
+
+    child = fork();
+    if (child < 0)
+        return 0;
+    if (child == 0) {
+        pid_t grandchild = fork();
+        if (grandchild < 0)
+            _exit(127);
+        if (grandchild > 0)
+            _exit(0);
+        setsid();
+        execlp("clamav-quarantine-gui", "clamav-quarantine-gui", (char *)NULL);
+        _exit(127);
+    }
+    if (waitpid(child, &status, 0) < 0)
+        return 0;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
+
 static int sha256_fd(int fd, char output[65])
 {
     unsigned char buffer[65536];
@@ -502,9 +527,11 @@ int main(void)
     struct json_object *path_object;
     struct json_object *quarantine_object;
     struct json_object *component_object;
+    struct json_object *command_object;
     struct json_object *response;
     const char *path;
     int quarantine;
+    int launched;
     const char *component;
 
     signal(SIGPIPE, SIG_IGN);
@@ -530,7 +557,16 @@ int main(void)
         buffer[length] = '\0';
         request = json_tokener_parse(buffer);
         free(buffer);
-        if (request == NULL || !json_object_object_get_ex(request, "path", &path_object)
+        if (request == NULL) {
+            response = failure("Invalid scan request", NULL);
+        } else if (json_object_object_get_ex(request, "command", &command_object)
+                && json_object_is_type(command_object, json_type_string)
+                && strcmp(json_object_get_string(command_object), "open_quarantine") == 0) {
+            launched = launch_quarantine_manager();
+            response = launched ? json_object_new_object() : failure("Unable to open the quarantine manager", NULL);
+            if (launched)
+                json_object_object_add(response, "success", json_object_new_boolean(1));
+        } else if (!json_object_object_get_ex(request, "path", &path_object)
                 || !json_object_is_type(path_object, json_type_string)) {
             response = failure("Invalid scan request", NULL);
         } else {

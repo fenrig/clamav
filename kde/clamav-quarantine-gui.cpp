@@ -192,7 +192,7 @@ public:
         auto *detailLayout = new QVBoxLayout(detailWidget);
         emptyState = new QLabel(tr("Nothing selected\n\nSelect a quarantined item to view its details."), detailWidget);
         emptyState->setAlignment(Qt::AlignCenter);
-        emptyState->setStyleSheet(QStringLiteral("font-size: 16px; color: palette(mid); padding: 32px;"));
+        emptyState->setStyleSheet(QStringLiteral("font-size: 16px; color: palette(window-text); padding: 32px;"));
         detailContent = new QWidget(detailWidget);
         auto *contentLayout = new QVBoxLayout(detailContent);
         contentLayout->setContentsMargins(0, 0, 0, 0);
@@ -437,6 +437,20 @@ private:
 
     void updateDetails()
     {
+        if (selectedRows().isEmpty()) {
+            emptyState->setVisible(true);
+            detailContent->setVisible(false);
+            componentLabel->setText(tr("Select an item"));
+            originalLabel->clear();
+            sourceLabel->clear();
+            hashLabel->clear();
+            createdLabel->clear();
+            descriptionLabel->clear();
+            severityLabel->clear();
+            severityMeter->setValue(0);
+            details->clear();
+            return;
+        }
         const int row = table->currentRow();
         const auto *item = row >= 0 ? table->item(row, 0) : nullptr;
         if (!item) {

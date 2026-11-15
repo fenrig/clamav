@@ -224,9 +224,16 @@ static int read_entry(const char *id, const char *metadata_path,
     }
     memset(entry, 0, sizeof(*entry));
     snprintf(entry->id, sizeof(entry->id), "%s", id);
-    snprintf(entry->component, sizeof(entry->component), "%s", json_string(object, "component"));
+    if (json_string(object, "component")[0] != '\0')
+        snprintf(entry->component, sizeof(entry->component), "%s", json_string(object, "component"));
+    else
+        snprintf(entry->component, sizeof(entry->component), "%s", "legacy (origin unknown)");
     snprintf(entry->original_name, sizeof(entry->original_name), "%s", json_string(object, "original_name"));
-    snprintf(entry->source, sizeof(entry->source), "%s", json_string(object, "source"));
+    if (strcmp(json_string(object, "source"), "clamav-native-host") == 0
+            || json_string(object, "source")[0] == '\0')
+        snprintf(entry->source, sizeof(entry->source), "%s", "Not recorded (legacy entry)");
+    else
+        snprintf(entry->source, sizeof(entry->source), "%s", json_string(object, "source"));
     snprintf(entry->detection, sizeof(entry->detection), "%s", json_string(object, "detection"));
     snprintf(entry->sha256, sizeof(entry->sha256), "%s", json_string(object, "sha256"));
     entry->size = (long long)status.st_size;

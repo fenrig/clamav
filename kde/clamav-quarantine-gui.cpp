@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFormLayout>
 #include <QFileDialog>
 #include <QFontDatabase>
@@ -55,7 +56,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override
     {
         const QModelIndex index = indexAt(event->position().toPoint());
-        if (!index.isValid() || selectionModel()->isSelected(index)) {
+        if (event->modifiers() == Qt::NoModifier
+                && (!index.isValid() || selectionModel()->isSelected(index))) {
             clearSelection();
             setCurrentItem(nullptr);
             event->accept();
@@ -95,7 +97,7 @@ public:
         table->setColumnCount(3);
         table->setHorizontalHeaderLabels({tr("Original filename"), tr("Detected by"), tr("Date")});
         table->setSelectionBehavior(QAbstractItemView::SelectRows);
-        table->setSelectionMode(QAbstractItemView::SingleSelection);
+        table->setSelectionMode(QAbstractItemView::ExtendedSelection);
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->setAlternatingRowColors(true);
         table->setSortingEnabled(true);
@@ -124,7 +126,13 @@ public:
 
         auto *detailWidget = new QWidget(this);
         auto *detailLayout = new QVBoxLayout(detailWidget);
-        auto *detailTitle = new QLabel(tr("Detection details"), detailWidget);
+        emptyState = new QLabel(tr("Nothing selected\n\nSelect a quarantined item to view its details."), detailWidget);
+        emptyState->setAlignment(Qt::AlignCenter);
+        emptyState->setStyleSheet(QStringLiteral("font-size: 16px; color: palette(mid); padding: 32px;"));
+        detailContent = new QWidget(detailWidget);
+        auto *contentLayout = new QVBoxLayout(detailContent);
+        contentLayout->setContentsMargins(0, 0, 0, 0);
+        auto *detailTitle = new QLabel(tr("Detection details"), detailContent);
         detailTitle->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600; padding-bottom: 4px;"));
         auto *form = new QFormLayout;
         form->addRow(tr("Component:"), componentLabel);
@@ -132,9 +140,9 @@ public:
         form->addRow(tr("Source path:"), sourceLabel);
         form->addRow(tr("SHA-256:"), hashLabel);
         form->addRow(tr("Created:"), createdLabel);
-        detailLayout->addWidget(detailTitle);
-        detailLayout->addLayout(form);
-        auto *summaryCard = new QFrame(detailWidget);
+        contentLayout->addWidget(detailTitle);
+        contentLayout->addLayout(form);
+        auto *summaryCard = new QFrame(detailContent);
         summaryCard->setObjectName(QStringLiteral("summaryCard"));
         auto *summaryLayout = new QVBoxLayout(summaryCard);
         auto *summaryTitle = new QLabel(tr("What this means"), summaryCard);
@@ -142,7 +150,7 @@ public:
         summaryLayout->addWidget(summaryTitle);
         summaryLayout->addWidget(descriptionLabel);
 
-        auto *reportCard = new QFrame(detailWidget);
+        auto *reportCard = new QFrame(detailContent);
         reportCard->setObjectName(QStringLiteral("reportCard"));
         auto *reportLayout = new QVBoxLayout(reportCard);
         auto *reportTitle = new QLabel(tr("Technical ClamAV report"), reportCard);
@@ -150,8 +158,10 @@ public:
         reportLayout->addWidget(reportTitle);
         reportLayout->addWidget(details, 1);
 
-        detailLayout->addWidget(summaryCard);
-        detailLayout->addWidget(reportCard, 1);
+        contentLayout->addWidget(summaryCard);
+        contentLayout->addWidget(reportCard, 1);
+        detailLayout->addWidget(emptyState, 1);
+        detailLayout->addWidget(detailContent, 1);
 
         auto *splitter = new QSplitter(Qt::Horizontal, central);
         auto *listWidget = new QWidget(splitter);
@@ -164,8 +174,9 @@ public:
         listLayout->addWidget(table);
         splitter->addWidget(listWidget);
         splitter->addWidget(detailWidget);
-        splitter->setStretchFactor(0, 1);
+        splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
+        splitter->setSizes({600, 400});
 
         layout->addWidget(new QLabel(tr("User quarantine (payloads are never opened by this application)"), this));
         layout->addWidget(pathLabel);
@@ -195,11 +206,7 @@ public:
         connect(virusTotalButton, &QPushButton::clicked, this, &QuarantineWindow::lookupVirusTotal);
         connect(searchBox, &QLineEdit::textChanged, this, &QuarantineWindow::filterRows);
         connect(table, &QTableWidget::itemSelectionChanged, this, [this] {
-            const bool selected = table->currentRow() >= 0;
-            restoreButton->setEnabled(selected);
-            deleteButton->setEnabled(selected);
-            lookupButton->setEnabled(selected);
-            virusTotalButton->setEnabled(selected && itemHashIsValid());
+            updateActionButtons();
             updateDetails();
         });
         refresh();
@@ -280,11 +287,30 @@ private:
         return item ? item->data(Qt::UserRole).toString() : QString();
     }
 
+    QList<int> selectedRows() const
+    {
+        QList<int> rows;
+        for (const QModelIndex &index : table->selectionModel()->selectedRows())
+            rows << index.row();
+        return rows;
+    }
+
+    void updateActionButtons()
+    {
+        const int selected = selectedRows().size();
+        restoreButton->setEnabled(selected > 0);
+        deleteButton->setEnabled(selected > 0);
+        lookupButton->setEnabled(selected == 1);
+        virusTotalButton->setEnabled(selected == 1 && itemHashIsValid());
+    }
+
     void updateDetails()
     {
         const int row = table->currentRow();
         const auto *item = row >= 0 ? table->item(row, 0) : nullptr;
         if (!item) {
+            emptyState->setVisible(true);
+            detailContent->setVisible(false);
             componentLabel->setText(tr("Select an item"));
             originalLabel->clear();
             sourceLabel->clear();
@@ -294,6 +320,8 @@ private:
             details->clear();
             return;
         }
+        emptyState->setVisible(false);
+        detailContent->setVisible(true);
         componentLabel->setText(table->item(row, 1)->text());
         originalLabel->setText(item->data(Qt::UserRole + 2).toString());
         sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
@@ -314,28 +342,58 @@ private:
 
     void restore()
     {
-        const QString id = selectedId();
-        if (id.isEmpty())
+        const QList<int> rows = selectedRows();
+        if (rows.isEmpty())
             return;
-        const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"));
-        if (destination.isEmpty())
+        if (rows.size() == 1) {
+            const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"));
+            if (destination.isEmpty())
+                return;
+            const QString id = table->item(rows.first(), 0)->data(Qt::UserRole).toString();
+            if (!clamav_quarantine_restore(id.toLatin1().constData(), destination.toLocal8Bit().constData()))
+                QMessageBox::warning(this, tr("Restore failed"), tr("The destination already exists or the quarantined file could not be restored."));
+            else
+                refresh();
             return;
-        if (!clamav_quarantine_restore(id.toLatin1().constData(), destination.toLocal8Bit().constData()))
-            QMessageBox::warning(this, tr("Restore failed"), tr("The destination already exists or the quarantined file could not be restored."));
-        else
-            refresh();
+        }
+        if (QMessageBox::question(this, tr("Restore multiple files"),
+                tr("Restore %1 quarantined files? Existing destination files will not be overwritten.").arg(rows.size())) != QMessageBox::Yes)
+            return;
+        const QString directory = QFileDialog::getExistingDirectory(this, tr("Choose restore directory"));
+        if (directory.isEmpty())
+            return;
+        int failures = 0;
+        for (const int row : rows) {
+            const auto *item = table->item(row, 0);
+            const QString id = item->data(Qt::UserRole).toString();
+            const QString name = item->data(Qt::UserRole + 2).toString();
+            if (!clamav_quarantine_restore(id.toLatin1().constData(), QDir(directory).filePath(name).toLocal8Bit().constData()))
+                ++failures;
+        }
+        refresh();
+        if (failures > 0)
+            QMessageBox::warning(this, tr("Restore incomplete"), tr("%1 file(s) could not be restored.").arg(failures));
     }
 
     void remove()
     {
-        const QString id = selectedId();
-        if (id.isEmpty() || QMessageBox::question(this, tr("Delete quarantined file"),
-                tr("Delete this quarantined file permanently?")) != QMessageBox::Yes)
+        const QList<int> rows = selectedRows();
+        if (rows.isEmpty())
             return;
-        if (!clamav_quarantine_delete(id.toLatin1().constData()))
-            QMessageBox::warning(this, tr("Delete failed"), tr("The quarantined file could not be deleted."));
-        else
-            refresh();
+        const QString prompt = rows.size() == 1
+            ? tr("Delete this quarantined file permanently?")
+            : tr("Delete %1 quarantined files permanently?").arg(rows.size());
+        if (QMessageBox::question(this, tr("Delete quarantined files"), prompt) != QMessageBox::Yes)
+            return;
+        int failures = 0;
+        for (const int row : rows) {
+            const QString id = table->item(row, 0)->data(Qt::UserRole).toString();
+            if (!clamav_quarantine_delete(id.toLatin1().constData()))
+                ++failures;
+        }
+        refresh();
+        if (failures > 0)
+            QMessageBox::warning(this, tr("Delete incomplete"), tr("%1 quarantined file(s) could not be deleted.").arg(failures));
     }
 
     void removeAll()
@@ -400,6 +458,8 @@ private:
     QLabel *descriptionLabel;
     QTextEdit *details;
     QPushButton *virusTotalButton;
+    QLabel *emptyState;
+    QWidget *detailContent;
 };
 
 int main(int argc, char **argv)

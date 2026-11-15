@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "ClamAV Download Scanner",
   "description": "Scan Firefox downloads with ClamAV.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "browser_specific_settings": {
     "gecko": {
       "id": "clamav-firefox@clamav.net",
@@ -12,9 +12,14 @@
   "permissions": [
     "downloads",
     "nativeMessaging",
-    "notifications"
+    "notifications",
+    "storage"
   ],
   "background": {
     "scripts": ["background.js"]
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }

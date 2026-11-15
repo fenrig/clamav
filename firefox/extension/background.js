@@ -5,6 +5,18 @@ let nativePort = null;
 let nativeCurrent = null;
 const nativeQueue = [];
 const scannedDownloads = new Set();
+let automaticScanning = true;
+
+const automaticScanningReady = browser.storage.local.get({ automaticScanning: true }).then((settings) => {
+  automaticScanning = settings.automaticScanning !== false;
+}).catch(() => {
+  automaticScanning = true;
+});
+
+browser.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes.automaticScanning)
+    automaticScanning = changes.automaticScanning.newValue !== false;
+});
 
 function pumpNativeQueue() {
   if (nativeCurrent || nativeQueue.length === 0) return;
@@ -70,6 +82,8 @@ function filename(download) {
 }
 
 async function scanDownload(downloadId) {
+  await automaticScanningReady;
+  if (!automaticScanning) return;
   if (scannedDownloads.has(downloadId)) return;
   const items = await browser.downloads.search({ id: downloadId });
   const download = items[0];

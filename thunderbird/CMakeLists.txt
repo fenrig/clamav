@@ -56,13 +56,16 @@ set(CLAMAV_FIREFOX_XPI
     ${CMAKE_CURRENT_BINARY_DIR}/clamav-firefox.xpi)
 set(CLAMAV_FIREFOX_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/manifest.json
-    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/background.js)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/background.js
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js)
 add_custom_command(
     OUTPUT
         ${CLAMAV_FIREFOX_XPI}
     COMMAND
         ${CMAKE_COMMAND} -E tar cf ${CLAMAV_FIREFOX_XPI}
-            --format=zip manifest.json background.js
+            --format=zip manifest.json background.js options.html options.css options.js
     DEPENDS
         ${CLAMAV_FIREFOX_EXTENSION_FILES}
     WORKING_DIRECTORY
@@ -118,6 +121,9 @@ install(
     FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/manifest.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/background.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/README.md
     DESTINATION
         ${CMAKE_INSTALL_DATADIR}/clamav/firefox

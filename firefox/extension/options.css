@@ -1,0 +1,53 @@
+:root {
+  color-scheme: light dark;
+  font: message-box;
+}
+
+body {
+  margin: 0;
+  color: CanvasText;
+  background: Canvas;
+}
+
+main {
+  max-width: 620px;
+  margin: 40px auto;
+  padding: 0 28px;
+}
+
+h1 {
+  font-size: 1.6em;
+  margin-bottom: 8px;
+}
+
+.intro {
+  color: GrayText;
+  margin-bottom: 28px;
+}
+
+.setting {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 18px;
+  border: 1px solid GrayText;
+  border-radius: 8px;
+}
+
+.setting input {
+  margin-top: 3px;
+}
+
+.setting span {
+  display: grid;
+  gap: 6px;
+}
+
+small {
+  color: GrayText;
+}
+
+#status {
+  min-height: 1.4em;
+  color: GrayText;
+}

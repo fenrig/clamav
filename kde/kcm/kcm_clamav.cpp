@@ -25,6 +25,7 @@
 #include <QToolButton>
 #include <QLocale>
 #include <QSignalBlocker>
+#include <QTabWidget>
 #include <QTextStream>
 #include <QRegularExpression>
 #include <QTimer>
@@ -200,6 +201,10 @@ public:
     {
         auto *root = new QVBoxLayout(widget());
         root->setSpacing(16);
+        widget()->setStyleSheet(QStringLiteral(
+            "QGroupBox { color: palette(window-text); }"
+            "QGroupBox QLabel { color: palette(window-text); }"
+            "QPlainTextEdit { color: palette(text); background-color: palette(base); }"));
         auto *header = new QWidget(widget());
         auto *headerLayout = new QHBoxLayout(header);
         headerLayout->setContentsMargins(0, 0, 0, 0);
@@ -210,7 +215,7 @@ public:
         headerLayout->addWidget(headerIcon);
         auto *headerText = new QVBoxLayout;
         auto *title = new QLabel(i18n("ClamAV protection"), header);
-        title->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 600;"));
+        title->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 600; color: palette(window-text);"));
         auto *subtitle = new QLabel(i18n("Manage malware scanning, on-access protection, and virus database updates."), header);
         subtitle->setWordWrap(true);
         subtitle->setStyleSheet(QStringLiteral("color: palette(mid);"));
@@ -219,17 +224,30 @@ public:
         headerLayout->addLayout(headerText, 1);
         root->addWidget(header);
 
+        auto *tabs = new QTabWidget(widget());
+        auto *overviewPage = new QWidget(tabs);
+        auto *overviewLayout = new QVBoxLayout(overviewPage);
+        auto *scanningPage = new QWidget(tabs);
+        auto *scanningLayout = new QVBoxLayout(scanningPage);
+        auto *updatesPage = new QWidget(tabs);
+        auto *updatesLayout = new QVBoxLayout(updatesPage);
+        tabs->addTab(overviewPage, QIcon::fromTheme(QStringLiteral("view-dashboard")), i18n("Overview"));
+        tabs->addTab(scanningPage, QIcon::fromTheme(QStringLiteral("security-high")), i18n("Scanning"));
+        tabs->addTab(updatesPage, QIcon::fromTheme(QStringLiteral("system-software-update")), i18n("Updates"));
+        root->addWidget(tabs, 1);
+
         healthBanner = new QFrame(widget());
         healthBanner->setObjectName(QStringLiteral("healthBanner"));
         auto *healthLayout = new QVBoxLayout(healthBanner);
         healthLayout->setContentsMargins(16, 12, 16, 12);
         healthTitle = new QLabel(healthBanner);
-        healthTitle->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600;"));
+        healthTitle->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600; color: palette(window-text);"));
         healthDetails = new QLabel(healthBanner);
         healthDetails->setWordWrap(true);
+        healthDetails->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         healthLayout->addWidget(healthTitle);
         healthLayout->addWidget(healthDetails);
-        root->addWidget(healthBanner);
+        overviewLayout->addWidget(healthBanner);
 
         auto *overview = new QGridLayout;
         overview->setHorizontalSpacing(10);
@@ -243,7 +261,7 @@ public:
             heading->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(mid);"));
             auto *value = new QLabel(card);
             value->setWordWrap(true);
-            value->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600;"));
+            value->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
             cardLayout->addWidget(heading);
             cardLayout->addWidget(value);
             overview->addWidget(card, row, column);
@@ -257,7 +275,7 @@ public:
         auto *overviewSpacer = new QWidget(widget());
         overviewSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         overview->addWidget(overviewSpacer, 1, 2);
-        root->addLayout(overview);
+        overviewLayout->addLayout(overview);
 
         auto *statusBox = new QGroupBox(i18n("Status"), widget());
         auto *status = new QFormLayout(statusBox);
@@ -266,6 +284,8 @@ public:
         onAccessStatus = new QLabel;
         timerStatus = new QLabel;
         databaseStatus = new QLabel;
+        for (QLabel *label : {clamdStatus, freshclamStatus, onAccessStatus, timerStatus, databaseStatus})
+            label->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         stats = new QPlainTextEdit;
         stats->setReadOnly(true);
         stats->setMaximumHeight(150);
@@ -276,7 +296,7 @@ public:
         status->addRow(i18n("Update timer:"), timerStatus);
         status->addRow(i18n("Database:"), databaseStatus);
         status->addRow(i18n("Scanner statistics:"), stats);
-        root->addWidget(statusBox);
+        overviewLayout->addWidget(statusBox);
 
         auto *actions = new QGroupBox(i18n("Quick actions"), widget());
         auto *actionLayout = new QGridLayout(actions);
@@ -305,9 +325,9 @@ public:
         applyButton->setEnabled(false);
         connect(applyButton, &QPushButton::clicked, this, &ClamavKCM::save);
         addButton(actionLayout, applyButton);
-        root->addWidget(actions);
+        overviewLayout->addWidget(actions);
 
-        auto *settings = new QGroupBox(i18n("Scanner configuration"), widget());
+        auto *settings = new QGroupBox(i18n("Scanner configuration"), scanningPage);
         auto *settingsLayout = new QVBoxLayout(settings);
         auto *settingsIntro = new QLabel(i18n("These options control how ClamAV scans files and how often its virus database is refreshed."), settings);
         settingsIntro->setWordWrap(true);
@@ -332,14 +352,22 @@ public:
         form->addRow(heuristicPrecedence);
         form->addRow(onAccessPrevention);
         form->addRow(i18n("On-access include paths:"), pathEditor);
-        freshclamSchedule = new QLineEdit(settings);
+        auto *updates = new QGroupBox(i18n("Virus database updates"), updatesPage);
+        auto *updatesForm = new QFormLayout(updates);
+        auto *updatesIntro = new QLabel(i18n("Keep the virus database current so new threats can be detected."), updates);
+        updatesIntro->setWordWrap(true);
+        updatesIntro->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        updatesForm->addRow(updatesIntro);
+        freshclamSchedule = new QLineEdit(updates);
         freshclamSchedule->setPlaceholderText(i18n("For example: daily or Mon *-*-* 03:00:00"));
-        freshclamDelay = new QLineEdit(settings);
+        freshclamDelay = new QLineEdit(updates);
         freshclamDelay->setPlaceholderText(i18n("For example: 1h or 15min"));
-        form->addRow(i18n("FreshClam schedule:"), freshclamSchedule);
-        form->addRow(i18n("FreshClam randomized delay:"), freshclamDelay);
-        root->addWidget(settings);
-        root->addStretch();
+        updatesForm->addRow(i18n("Update schedule:"), freshclamSchedule);
+        updatesForm->addRow(i18n("Randomized delay:"), freshclamDelay);
+        scanningLayout->addWidget(settings);
+        scanningLayout->addStretch();
+        updatesLayout->addWidget(updates);
+        updatesLayout->addStretch();
         connect(lazyLoading, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);
         connect(keepAlive, &QLineEdit::textChanged, this, &ClamavKCM::settingsChanged);
         connect(heuristicAlerts, &QCheckBox::toggled, this, &ClamavKCM::settingsChanged);

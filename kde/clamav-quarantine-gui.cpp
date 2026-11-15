@@ -3,6 +3,7 @@
 #include "quarantine.h"
 
 #include <QApplication>
+#include <QColor>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -30,7 +31,8 @@
 static QString localDescription(const QString &detection)
 {
     const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
-    if (name.startsWith(QStringLiteral("Eicar-Signature"), Qt::CaseInsensitive))
+    if (name.startsWith(QStringLiteral("Eicar-Signature"), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("Eicar-Test-Signature"), Qt::CaseInsensitive))
         return QObject::tr("This is the standard harmless EICAR antivirus test file, not a real infection.");
     if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
             || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
@@ -45,6 +47,20 @@ static QString localDescription(const QString &detection)
             || name.contains(QStringLiteral("Worm"), Qt::CaseInsensitive))
         return QObject::tr("The detection name identifies this as a virus or worm signature associated with malicious code.");
     return QObject::tr("ClamAV reported a signature match. Use the web-search or VirusTotal buttons for more context; these results are informational and may be incomplete.");
+}
+
+static QColor threatTint(const QString &detection)
+{
+    const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
+    if (name.startsWith(QStringLiteral("Eicar"), Qt::CaseInsensitive))
+        return QColor(80, 170, 100, 45);
+    if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("PUP."), Qt::CaseInsensitive))
+        return QColor(220, 170, 30, 55);
+    if (name.startsWith(QStringLiteral("Phishing."), Qt::CaseInsensitive)
+            || name.startsWith(QStringLiteral("Heuristics."), Qt::CaseInsensitive))
+        return QColor(235, 125, 30, 55);
+    return QColor(210, 55, 65, 50);
 }
 
 class DeselectableTableWidget final : public QTableWidget
@@ -244,13 +260,19 @@ private:
             detectionItem->setData(Qt::UserRole + 4, QString::fromLatin1(entry.sha256));
             detectionItem->setData(Qt::UserRole + 5, entry.created);
             table->setItem(row, 0, detectionItem);
-            table->setItem(row, 1, new QTableWidgetItem(QString::fromLocal8Bit(entry.component)));
-            table->setItem(row, 2, new QTableWidgetItem(entry.created > 0
-                ? QDateTime::fromSecsSinceEpoch(entry.created).toString(Qt::TextDate)
-                : tr("Unknown")));
+            auto *componentItem = new QTableWidgetItem(QString::fromLocal8Bit(entry.component));
+            auto *dateItem = new QTableWidgetItem(entry.created > 0
+                ? QDateTime::fromSecsSinceEpoch(entry.created).toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+                : QString());
+            const QColor tint = threatTint(QString::fromLocal8Bit(entry.detection));
+            for (QTableWidgetItem *item : {detectionItem, componentItem, dateItem})
+                item->setBackground(tint);
+            table->setItem(row, 1, componentItem);
+            table->setItem(row, 2, dateItem);
         }
         clamav_quarantine_list_free(entries);
         table->setSortingEnabled(true);
+        table->sortItems(2, Qt::DescendingOrder);
         table->clearSelection();
         deleteAllButton->setEnabled(count > 0);
         updateDetails();

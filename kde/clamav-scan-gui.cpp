@@ -76,6 +76,25 @@ static QColor detectionLevelColor(int level)
     }
 }
 
+static QString canonicalDetection(QString detection)
+{
+    detection = detection.trimmed();
+    detection.remove(QRegularExpression(QStringLiteral("\\s+FOUND$"),
+                                        QRegularExpression::CaseInsensitiveOption));
+    const int separator = detection.lastIndexOf(QStringLiteral(": "));
+    if (separator >= 0)
+        detection = detection.mid(separator + 2).trimmed();
+    return detection;
+}
+
+static QString lookupDetectionName(const QString &detection)
+{
+    QString name = canonicalDetection(detection);
+    name.remove(QRegularExpression(QStringLiteral("^ClamAV\\s+fd\\[\\d+\\]:\\s*"),
+                                   QRegularExpression::CaseInsensitiveOption));
+    return name.trimmed();
+}
+
 struct Stats {
     int queue = 0;
     int live = 0;
@@ -227,6 +246,8 @@ public:
         detectionsToggle_->setEnabled(false);
         connect(detectionsToggle_, &QPushButton::toggled, this, [this](bool open) {
             detectionsPanel_->setVisible(open);
+            if (panelFoldButton_)
+                panelFoldButton_->setText(open ? tr("Fold") : tr("Unfold"));
             if (open)
                 detectionsPanel_->raise();
         });
@@ -349,9 +370,9 @@ public:
         panelTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
         panelHeader->addWidget(panelTitle);
         panelHeader->addStretch();
-        auto *foldButton = new QPushButton(tr("Fold"), detectionsPanel_);
-        connect(foldButton, &QPushButton::clicked, detectionsToggle_, &QPushButton::click);
-        panelHeader->addWidget(foldButton);
+        panelFoldButton_ = new QPushButton(tr("Fold"), detectionsPanel_);
+        connect(panelFoldButton_, &QPushButton::clicked, detectionsToggle_, &QPushButton::click);
+        panelHeader->addWidget(panelFoldButton_);
         panelLayout->addLayout(panelHeader);
         auto *scroll = new QScrollArea(detectionsPanel_);
         scroll->setWidgetResizable(true);
@@ -361,7 +382,7 @@ public:
         detectionsLayout_->setAlignment(Qt::AlignTop);
         scroll->setWidget(rows);
         panelLayout->addWidget(scroll, 1);
-        detectionsPanel_->setGeometry(width() / 8, 72, width() * 3 / 4, height() - 120);
+        detectionsPanel_->setGeometry(width() * 3 / 5, 0, width() * 2 / 5, height());
         detectionsPanel_->hide();
         detectionsPanel_->raise();
     }
@@ -563,17 +584,16 @@ private:
                         const QString message = result.value(QStringLiteral("message")).toString();
                         for (const QString &messageLine : message.split(QLatin1Char('\n'))) {
                             if (messageLine.trimmed().endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
-                                detection = messageLine.trimmed();
-                                detection.remove(QRegularExpression(QStringLiteral("\\s+FOUND$"),
-                                                                    QRegularExpression::CaseInsensitiveOption));
+                                detection = canonicalDetection(messageLine);
                                 break;
                             }
                         }
                         if (detection.isEmpty())
-                            detection = message.section(QLatin1Char('\n'), 0, 0).trimmed();
+                            detection = canonicalDetection(message.section(QLatin1Char('\n'), 0, 0));
                         const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                             [this, &detection](const DetectionEntry &entry) {
-                                return entry.path == currentFile_ && entry.detection == detection;
+                                return entry.path == currentFile_
+                                    && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
                             });
                         if (!known)
                             detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
@@ -610,10 +630,12 @@ private:
                         path = currentFile_;
                         detection = line.left(foundAt).trimmed();
                     }
+                    detection = canonicalDetection(detection);
                     if (!path.isEmpty() && !detection.isEmpty()) {
                         const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                             [&path, &detection](const DetectionEntry &entry) {
-                                return entry.path == path && entry.detection == detection;
+                                return entry.path == path
+                                    && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
                             });
                         if (!known)
                             detectedFiles_.append({path, detection, scanHashes_.value(path), {}, false, false});
@@ -697,14 +719,20 @@ private:
             auto *virusTotal = new QPushButton(tr("Look up on VirusTotal"), row);
             auto *deleteButton = new QPushButton(tr("Delete permanently"), row);
             deleteButton->setEnabled(!detected.deleted);
-            const QString query = detected.detection.left(256);
+            const QString query = lookupDetectionName(detected.detection).left(256);
+            const QString sha256 = detected.sha256;
             connect(web, &QPushButton::clicked, this, [query] {
                 QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+")
                                                + QString::fromLatin1(QUrl::toPercentEncoding(query))));
             });
-            connect(virusTotal, &QPushButton::clicked, this, [query] {
-                QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.virustotal.com/gui/search/")
-                                               + QString::fromLatin1(QUrl::toPercentEncoding(query))));
+            connect(virusTotal, &QPushButton::clicked, this, [query, sha256] {
+                const bool validHash = sha256.size() == 64
+                    && QRegularExpression(QStringLiteral("^[0-9a-fA-F]{64}$")).match(sha256).hasMatch();
+                const QString target = validHash
+                    ? QStringLiteral("https://www.virustotal.com/gui/file/") + sha256 + QStringLiteral("/detection")
+                    : QStringLiteral("https://www.virustotal.com/gui/search/")
+                        + QString::fromLatin1(QUrl::toPercentEncoding(query));
+                QDesktopServices::openUrl(QUrl(target));
             });
             const QString path = detected.path;
             const QString detectionName = detected.detection;
@@ -816,10 +844,8 @@ private:
     void resizeEvent(QResizeEvent *event) override
     {
         QDialog::resizeEvent(event);
-        if (detectionsPanel_) {
-            detectionsPanel_->setGeometry(width() / 8, 72,
-                                          width() * 3 / 4, height() - 120);
-        }
+        if (detectionsPanel_)
+            detectionsPanel_->setGeometry(width() * 3 / 5, 0, width() * 2 / 5, height());
     }
 
     void quarantineDetectedFiles()
@@ -943,6 +969,7 @@ private:
     QPushButton *quarantineButton_ = nullptr;
     QCheckBox *quarantineCheckBox_ = nullptr;
     QPushButton *detectionsToggle_ = nullptr;
+    QPushButton *panelFoldButton_ = nullptr;
     QFrame *detectionsPanel_ = nullptr;
     QVBoxLayout *detectionsLayout_ = nullptr;
     QProgressBar *progress_ = nullptr;

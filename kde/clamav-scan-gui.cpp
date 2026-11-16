@@ -11,6 +11,8 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QIcon>
 #include <QLabel>
 #include <QLocalSocket>
@@ -390,8 +392,8 @@ private:
             title = tr("Scan in progress");
             details = tr("ClamAV is checking the selected targets.");
         } else if (infectionDetected_) {
-            color = red;
-            title = tr("Threats found");
+            color = allHandled ? green : red;
+            title = allHandled ? tr("Threats handled") : tr("Threats found");
             details = pending > 0
                 ? tr("%1 detected infection(s) still need handling.").arg(pending)
                 : tr("All detected infections have been handled.");
@@ -551,6 +553,34 @@ private:
                 const QString line = sourceLine.trimmed();
                 if (line.startsWith(QStringLiteral("SCAN_FILE: ")))
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
+                else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
+                    const QJsonDocument document = QJsonDocument::fromJson(
+                        line.mid(QStringLiteral("SCAN_RESULT: ").size()).toUtf8());
+                    const QJsonObject result = document.object();
+                    scanHashes_.insert(currentFile_, result.value(QStringLiteral("sha256")).toString());
+                    if (result.value(QStringLiteral("infected")).toBool()) {
+                        QString detection;
+                        const QString message = result.value(QStringLiteral("message")).toString();
+                        for (const QString &messageLine : message.split(QLatin1Char('\n'))) {
+                            if (messageLine.trimmed().endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
+                                detection = messageLine.trimmed();
+                                detection.remove(QRegularExpression(QStringLiteral("\\s+FOUND$"),
+                                                                    QRegularExpression::CaseInsensitiveOption));
+                                break;
+                            }
+                        }
+                        if (detection.isEmpty())
+                            detection = message.section(QLatin1Char('\n'), 0, 0).trimmed();
+                        const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                            [this, &detection](const DetectionEntry &entry) {
+                                return entry.path == currentFile_ && entry.detection == detection;
+                            });
+                        if (!known)
+                            detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
+                                                   result.value(QStringLiteral("quarantined")).toBool(), false});
+                        infectionDetected_ = true;
+                    }
+                }
                 else if (line.startsWith(QStringLiteral("SHA-256: "))) {
                     const QString hash = line.mid(QStringLiteral("SHA-256: ").size()).trimmed();
                     scanHashes_.insert(currentFile_, hash);
@@ -571,9 +601,16 @@ private:
                 const int foundAt = line.lastIndexOf(QStringLiteral(" FOUND"), -1, Qt::CaseInsensitive);
                 if (foundAt > 0) {
                     const int separator = line.lastIndexOf(QLatin1Char(':'), foundAt);
+                    QString path;
+                    QString detection;
                     if (separator > 0 && !line.left(separator).startsWith(QStringLiteral("fd["))) {
-                        const QString path = line.left(separator).trimmed();
-                        const QString detection = line.mid(separator + 1, foundAt - separator - 1).trimmed();
+                        path = line.left(separator).trimmed();
+                        detection = line.mid(separator + 1, foundAt - separator - 1).trimmed();
+                    } else if (!currentFile_.isEmpty()) {
+                        path = currentFile_;
+                        detection = line.left(foundAt).trimmed();
+                    }
+                    if (!path.isEmpty() && !detection.isEmpty()) {
                         const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                             [&path, &detection](const DetectionEntry &entry) {
                                 return entry.path == path && entry.detection == detection;

@@ -22,6 +22,8 @@ static void scan_one(const char *path)
     }
     if (json_object_object_get_ex(result, "message", &value))
         message = json_object_get_string(value);
+    printf("SCAN_RESULT: %s\n", json_object_to_json_string_ext(result, JSON_C_TO_STRING_PLAIN));
+    fflush(stdout);
     puts(message);
     fflush(stdout);
     if (json_object_object_get_ex(result, "infected", &value)

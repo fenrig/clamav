@@ -46,7 +46,7 @@ int main(int argc, char **argv)
         return 2;
     for (i = 1; i < argc; ++i) {
         struct stat status;
-        if (lstat(argv[i], &status) != 0) {
+        if (stat(argv[i], &status) != 0) {
             perror(argv[i]);
             scan_status = 2;
         } else if (S_ISDIR(status.st_mode)) {

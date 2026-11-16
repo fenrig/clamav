@@ -434,11 +434,15 @@ private:
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
             rawOutput_ += QString::fromLocal8Bit(text);
-            if (rawOutput_.contains(QStringLiteral(" FOUND"), Qt::CaseInsensitive)
-                    || rawOutput_.contains(QStringLiteral("A virus was identified"), Qt::CaseInsensitive)) {
-                infectionDetected_ = true;
-                updateStatusCard();
+            for (const QString &sourceLine : rawOutput_.split(QLatin1Char('\n'))) {
+                const QString line = sourceLine.trimmed();
+                if (line.startsWith(QStringLiteral("A virus was identified."), Qt::CaseInsensitive)
+                        || line.endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
+                    infectionDetected_ = true;
+                    break;
+                }
             }
+            updateStatusCard();
             output_->setPlainText(friendlyActivity(rawOutput_));
             output_->ensureCursorVisible();
         }

@@ -50,7 +50,9 @@ int main(int argc, char **argv)
             perror(argv[i]);
             scan_status = 2;
         } else if (S_ISDIR(status.st_mode)) {
-            if (nftw(argv[i], scan_tree, 16, FTW_PHYS) != 0)
+            char resolved[PATH_MAX];
+            if (realpath(argv[i], resolved) == NULL
+                    || nftw(resolved, scan_tree, 16, FTW_PHYS) != 0)
                 scan_status = 2;
         } else if (S_ISREG(status.st_mode)) {
             scan_one(argv[i]);

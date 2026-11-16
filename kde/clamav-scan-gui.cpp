@@ -224,7 +224,7 @@ public:
         progress_->setFormat(tr("Scanning…"));
         layout->addWidget(progress_);
         currentFileLabel_ = new QLabel(tr("Current file: preparing…"), this);
-        currentFileLabel_->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        currentFileLabel_->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         currentFileLabel_->setWordWrap(false);
         layout->addWidget(currentFileLabel_);
         auto *activity = new QGroupBox(tr("Scan activity"), this);

@@ -541,6 +541,25 @@ async function displayedMessageId(sender) {
   return messageId;
 }
 
+async function deleteDisplayedMessage(sender) {
+  const messageId = await displayedMessageId(sender);
+  try {
+    // This is a user-initiated action, so Thunderbird updates the open mail
+    // view and makes the operation undoable while honoring the account's
+    // normal delete-to-Trash setting.
+    await messenger.messages.delete([messageId], {
+      deletePermanently: false,
+      isUserAction: true
+    });
+  } catch (error) {
+    // The object form was added after the oldest Thunderbird version that
+    // supports this extension. Keep the legacy boolean form as a fallback.
+    if (!/argument|option|isUserAction|deletePermanently/i.test(error.message || "")) throw error;
+    await messenger.messages.delete([messageId], false);
+  }
+  return messageId;
+}
+
 async function deleteDisplayedAttachments(messageId) {
   const current = detections.get(messageId) || [];
   const attachments = await messenger.messages.listAttachments(messageId);
@@ -663,9 +682,7 @@ async function publishDetection(messageId, result, attachment) {
 messenger.runtime.onMessage.addListener(async (request, sender) => {
   if (request?.command === "deleteDisplayedMessage") {
     try {
-      const messageId = await displayedMessageId(sender);
-      // Use the account's normal deletion behavior (normally move to Trash).
-      await messenger.messages.delete([messageId], false);
+      const messageId = await deleteDisplayedMessage(sender);
       detections.delete(messageId);
       if (sender.tab) {
         await messenger.tabs.sendMessage(sender.tab.id, {

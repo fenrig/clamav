@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QIcon>
 #include <QLabel>
 #include <QLocalSocket>
@@ -85,6 +86,7 @@ struct Stats {
 struct DetectionEntry {
     QString path;
     QString detection;
+    QString sha256;
     QString quarantineId;
     bool handled = false;
     bool deleted = false;
@@ -318,16 +320,10 @@ public:
         connect(process_, &QProcess::readyReadStandardError, this, [this] { readOutput(); });
         connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) { scanFinished(code); });
-        QStringList arguments;
-        arguments << QStringLiteral("--infected");
-        if (QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
-            arguments.prepend(QStringLiteral("--multiscan"));
+        QStringList arguments{QStringLiteral("--scan-only")};
         arguments += paths_;
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
-        if (QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan"))
-            if (const auto daemon = clamdPids(); !daemon.isEmpty())
-                pids_ = daemon, cpuTarget_ = tr("ClamAV daemon");
 
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
         metricsTimer_.start(500);
@@ -555,6 +551,13 @@ private:
                 const QString line = sourceLine.trimmed();
                 if (line.startsWith(QStringLiteral("SCAN_FILE: ")))
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
+                else if (line.startsWith(QStringLiteral("SHA-256: "))) {
+                    const QString hash = line.mid(QStringLiteral("SHA-256: ").size()).trimmed();
+                    scanHashes_.insert(currentFile_, hash);
+                    for (auto &entry : detectedFiles_)
+                        if (entry.path == currentFile_)
+                            entry.sha256 = hash;
+                }
             }
             rawOutput_ += incoming;
             for (const QString &sourceLine : rawOutput_.split(QLatin1Char('\n'))) {
@@ -576,7 +579,7 @@ private:
                                 return entry.path == path && entry.detection == detection;
                             });
                         if (!known)
-                            detectedFiles_.append({path, detection, {}, false, false});
+                            detectedFiles_.append({path, detection, scanHashes_.value(path), {}, false, false});
                     }
                 }
                 if (line.startsWith(QStringLiteral("A virus was identified."), Qt::CaseInsensitive)
@@ -800,10 +803,11 @@ private:
             const QByteArray source = detected.path.toLocal8Bit();
             const QByteArray name = QFileInfo(detected.path).fileName().toLocal8Bit();
             const QByteArray detection = detected.detection.toLocal8Bit();
+            const QByteArray sha256 = detected.sha256.toLatin1();
             const QByteArray component = "plasma";
             const clamav_quarantine_metadata metadata{
                 component.constData(), name.constData(), source.constData(),
-                detection.constData(), ""};
+                detection.constData(), sha256.constData()};
             char id[CLAMAV_QUARANTINE_ID_LENGTH];
             char payload[PATH_MAX];
             if (clamav_quarantine_store(source.constData(), &metadata, 1, id, payload)) {
@@ -884,6 +888,7 @@ private:
     QString statusText_;
     QString rawOutput_;
     QList<DetectionEntry> detectedFiles_;
+    QHash<QString, QString> scanHashes_;
     QString currentFile_;
     QList<qint64> pids_;
     QProcess *process_ = nullptr;
@@ -939,11 +944,7 @@ int main(int argc, char **argv)
     const QStringList paths = parser.positionalArguments();
     if ((!parser.isSet(scannerOption) && !parser.isSet(quarantineOption)) || paths.isEmpty())
         return 2;
-    QString scanner = parser.value(scannerOption);
-    if (scanner.isEmpty())
-        scanner = QStandardPaths::findExecutable(QStringLiteral("clamdscan"));
-    if (scanner.isEmpty())
-        scanner = QStandardPaths::findExecutable(QStringLiteral("clamscan"));
+    QString scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
     if (scanner.isEmpty())
         return 2;
     ScanDialog dialog(scanner, paths, parser.isSet(quarantineOption));

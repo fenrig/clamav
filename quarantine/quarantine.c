@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
+#include <ctype.h>
 
 static int make_directory(const char *path)
 {
@@ -181,6 +182,32 @@ int clamav_quarantine_path(char path[PATH_MAX])
     return chmod(path, 0700) == 0;
 }
 
+static int shared_blob_path(const char *hash, char path[PATH_MAX])
+{
+    char directory[PATH_MAX];
+    size_t length;
+    size_t i;
+    if (hash == NULL || strlen(hash) != 64)
+        return 0;
+    for (i = 0; i < 64; ++i)
+        if (!isxdigit((unsigned char)hash[i]))
+            return 0;
+    if (!clamav_quarantine_path(directory))
+        return 0;
+    length = strlen(directory);
+    if (snprintf(directory + length, sizeof(directory) - length, "/blobs") >= (int)(sizeof(directory) - length)
+            || !make_directory(directory)
+            || snprintf(path, PATH_MAX, "%s/%s.blob", directory, hash) >= PATH_MAX)
+        return 0;
+    return 1;
+}
+
+static int valid_hash(const char *hash)
+{
+    char path[PATH_MAX];
+    return shared_blob_path(hash, path);
+}
+
 static int random_id(char id[CLAMAV_QUARANTINE_ID_LENGTH])
 {
     static const char hex[] = "0123456789abcdef";
@@ -285,6 +312,8 @@ int clamav_quarantine_store(const char *source_path,
     char directory[PATH_MAX];
     char temporary[PATH_MAX];
     char metadata_path[PATH_MAX];
+    char blob[PATH_MAX];
+    char blob_tmp[PATH_MAX];
     int source;
     int destination;
     int success = 0;
@@ -314,28 +343,41 @@ int clamav_quarantine_store(const char *source_path,
         close(source);
         return 0;
     }
-    destination = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (destination >= 0
-            && posix_fallocate(destination, 0, source_status.st_size) == 0
-            && copy_file(source, destination)
-            && fchmod(destination, 0600) == 0 && fsync(destination) == 0) {
-        close(destination);
+    if (!shared_blob_path(metadata->sha256, blob)
+            || snprintf(blob_tmp, sizeof(blob_tmp), "%s.%s.tmp", blob, id) >= (int)sizeof(blob_tmp)) {
+        close(source);
+        return 0;
+    }
+    if (access(blob, F_OK) != 0) {
+        destination = open(blob_tmp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (destination >= 0
+                && posix_fallocate(destination, 0, source_status.st_size) == 0
+                && copy_file(source, destination)
+                && fchmod(destination, 0600) == 0 && fsync(destination) == 0) {
+            close(destination);
+            destination = -1;
+            if (rename(blob_tmp, blob) != 0)
+                unlink(blob_tmp);
+        }
+    } else {
         destination = -1;
-        if (rename(temporary, payload_path) == 0
-                && write_metadata(metadata_path, id, metadata, "quarantined", NULL,
-                                  source_status.st_size)) {
+    }
+    if (access(blob, F_OK) == 0
+            && link(blob, payload_path) == 0
+            && write_metadata(metadata_path, id, metadata, "quarantined", NULL,
+                              source_status.st_size)) {
             success = 1;
             if (move_file && unlink(source_path) != 0)
                 success = 0;
             clamav_quarantine_audit("quarantine", id, metadata->component,
                                     source_path, metadata->detection, success);
         }
-    }
     if (destination >= 0)
         close(destination);
     close(source);
     if (!success) {
         unlink(temporary);
+        unlink(blob_tmp);
         unlink(payload_path);
         unlink(metadata_path);
     }
@@ -500,6 +542,7 @@ static int delete_entry(const char *id, const char *action)
     const char *state;
     const char *source;
     const char *component;
+    const char *sha256;
     if (!entry_paths(id, payload, metadata))
         return 0;
     object = json_object_from_file(metadata);
@@ -508,6 +551,7 @@ static int delete_entry(const char *id, const char *action)
     state = json_string(object, "state");
     source = json_string(object, "source");
     component = json_string(object, "component");
+    sha256 = json_string(object, "sha256");
     if (strcmp(state, "pending") == 0) {
         struct stat status;
         if (lstat(source, &status) == 0) {
@@ -539,6 +583,13 @@ static int delete_entry(const char *id, const char *action)
         /* Keep the metadata if it cannot be removed; the payload is already
          * gone and will be ignored by the next list operation. */
         return 0;
+    }
+    if (valid_hash(sha256)) {
+        char blob[PATH_MAX];
+        struct stat status;
+        if (shared_blob_path(sha256, blob)
+                && stat(blob, &status) == 0 && status.st_nlink <= 1)
+            unlink(blob);
     }
     clamav_quarantine_audit(action, id, NULL, NULL, NULL, 1);
     return 1;

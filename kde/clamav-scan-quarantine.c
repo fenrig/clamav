@@ -6,12 +6,13 @@
 #include <ftw.h>
 
 static int scan_status;
+static int quarantine_mode;
 
 static void scan_one(const char *path)
 {
     printf("SCAN_FILE: %s\n", path);
     fflush(stdout);
-    struct json_object *result = scan_file(path, 1, "plasma");
+    struct json_object *result = scan_file(path, quarantine_mode, "plasma");
     struct json_object *value;
     const char *message = "Scan failed";
 
@@ -45,9 +46,17 @@ static int scan_tree(const char *path, const struct stat *status,
 int main(int argc, char **argv)
 {
     int i;
-    if (argc < 2)
+    int first_path = 1;
+    quarantine_mode = 0;
+    if (argc > 1 && strcmp(argv[1], "--quarantine") == 0) {
+        quarantine_mode = 1;
+        first_path++;
+    } else if (argc > 1 && strcmp(argv[1], "--scan-only") == 0) {
+        first_path++;
+    }
+    if (argc <= first_path)
         return 2;
-    for (i = 1; i < argc; ++i) {
+    for (i = first_path; i < argc; ++i) {
         struct stat status;
         if (stat(argv[i], &status) != 0) {
             perror(argv[i]);

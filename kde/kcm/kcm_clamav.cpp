@@ -975,7 +975,7 @@ private:
         quarantineTimerStatus->setText(quarantineTimer == QStringLiteral("active")
             ? i18n("Enabled and scheduled") : i18n("Disabled or not running"));
         databaseStatus->setText(databaseAvailable()
-            ? i18n("Available · updated %1", databaseUpdated())
+            ? i18n("Installed · last updated %1", databaseUpdated())
             : i18n("Unavailable"));
         const QString stat = clamdCommand("nSTATS\n");
         stats->setPlainText(stat.isEmpty() ? i18n("The ClamAV service is not reachable.") : friendlyStats(stat));
@@ -1005,7 +1005,7 @@ private:
         engineOverview->setText(daemonRunning ? i18n("Running") : i18n("Not running"));
         updatesOverview->setText(updatesRunning ? i18n("Updating automatically") : i18n("Schedule inactive"));
         databaseOverview->setText(databaseReady
-            ? i18n("Available\nUpdated %1", databaseUpdated())
+            ? i18n("Installed\nLast updated %1", databaseUpdated())
             : i18n("Unavailable"));
         if (onAccessRunning)
             onAccessOverview->setText(i18n("Enabled and running"));

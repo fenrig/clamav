@@ -39,6 +39,13 @@ virus detections. Abandoned files are also cleaned when the extension starts.
 Completed Thunderbird downloads are also scanned automatically by default,
 including attachments or linked files saved to disk. This can be disabled from
 the options page; the extension's own temporary scan downloads are excluded.
+Before an outgoing message is sent, attachments are also scanned locally by
+default. If ClamAV detects a threat, or cannot complete a scan, the first send
+attempt is paused and Thunderbird shows a warning with the affected filenames.
+The user can review the message and choose Send again within 15 minutes to
+explicitly continue; this is a warning-only safeguard and does not permanently
+block sending. It can be disabled from the options page. Outgoing attachment
+bytes remain local and are removed after scanning.
 When an attachment is infected, its temporary scan copy is moved to the same
 per-user ClamAV quarantine used by Firefox; the original message is not changed
 unless the user chooses one of the message or attachment deletion actions.

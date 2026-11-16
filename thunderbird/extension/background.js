@@ -84,8 +84,10 @@ const VIRUS_TAG_KEY = "clamav-virus";
 const PHISHING_TAG_KEY = "clamav-phishing";
 const DEFAULT_ACCOUNT = { autoScan: true };
 const DEFAULT_CACHE = { maxEntries: 1000, maxAgeDays: 180 };
+const OUTGOING_SEND_OVERRIDE_TTL_MS = 15 * 60 * 1000;
 const detections = new Map();
 const scannedDownloads = new Set();
+const outgoingSendOverrides = new Map();
 let libraryScan = null;
 let diagnosticLogging = false;
 
@@ -167,11 +169,12 @@ async function cleanupTemporaryDownloads() {
 cleanupTemporaryDownloads();
 
 async function settings() {
-  const stored = await messenger.storage.local.get(["accounts", "cache", "scanDownloads"]);
+  const stored = await messenger.storage.local.get(["accounts", "cache", "scanDownloads", "scanOutgoing"]);
   return {
     accounts: stored.accounts || {},
     cache: { ...DEFAULT_CACHE, ...(stored.cache || {}) },
-    scanDownloads: stored.scanDownloads !== false
+    scanDownloads: stored.scanDownloads !== false,
+    scanOutgoing: stored.scanOutgoing !== false
   };
 }
 
@@ -265,6 +268,89 @@ async function waitForDownload(downloadId) {
           : "Thunderbird could not save the attachment"));
       }
     }).catch(fail);
+  });
+}
+
+function composeAttachmentKey(attachments) {
+  return attachments.map(attachment => `${attachment.id}:${attachment.name || "attachment"}:${attachment.size || 0}`).join("|");
+}
+
+async function scanOutgoingAttachments(tabId, attachments) {
+  const detections = [];
+  const failures = [];
+  for (const attachment of attachments) {
+    let downloadId;
+    let objectUrl;
+    try {
+      const file = await messenger.compose.getAttachmentFile(tabId, attachment.id);
+      objectUrl = URL.createObjectURL(file);
+      downloadId = await messenger.downloads.download({
+        url: objectUrl,
+        filename: `clamav-scan/outgoing-${safeFilename(attachment.name)}`,
+        saveAs: false,
+        conflictAction: "uniquify"
+      });
+      const download = await waitForDownload(downloadId);
+      const result = await scanWithNativeHost(download.filename, false);
+      if (!result || result.success === false)
+        throw new Error(result?.message || "ClamAV could not complete the scan");
+      if (result.infected) detections.push({ name: attachment.name || "attachment", result });
+    } catch (error) {
+      failures.push({ name: attachment.name || "attachment", error: error.message });
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (downloadId !== undefined) await messenger.downloads.removeFile(downloadId).catch(() => {});
+    }
+  }
+  return { detections, failures };
+}
+
+if (messenger.compose?.onBeforeSend) {
+  messenger.compose.onBeforeSend.addListener(async (tab) => {
+    const stored = await settings();
+    if (!stored.scanOutgoing || !tab?.id) return {};
+
+    let attachments;
+    try {
+      attachments = await messenger.compose.listAttachments(tab.id);
+    } catch (error) {
+      await createNotification({
+        type: "basic",
+        title: message("outgoingScanFailed"),
+        message: error.message
+      });
+      return { cancel: true };
+    }
+    if (!attachments.length) return {};
+
+    const key = composeAttachmentKey(attachments);
+    const override = outgoingSendOverrides.get(tab.id);
+    if (override && override.key === key && override.expiresAt > Date.now()) {
+      outgoingSendOverrides.delete(tab.id);
+      return {};
+    }
+    outgoingSendOverrides.delete(tab.id);
+
+    const scan = await scanOutgoingAttachments(tab.id, attachments);
+    if (!scan.detections.length && !scan.failures.length) return {};
+
+    outgoingSendOverrides.set(tab.id, {
+      key,
+      expiresAt: Date.now() + OUTGOING_SEND_OVERRIDE_TTL_MS
+    });
+    const detectedNames = scan.detections.map(item => item.name).join(", ");
+    const failedNames = scan.failures.map(item => item.name).join(", ");
+    const parts = [];
+    if (detectedNames) parts.push(`${message("outgoingThreats")}: ${detectedNames}`);
+    if (failedNames) parts.push(`${message("outgoingScanIncomplete")}: ${failedNames}`);
+    parts.push(message("outgoingSendAgain"));
+    await createNotification({
+      type: "basic",
+      title: message("outgoingWarning"),
+      message: parts.join("\n\n"),
+      iconUrl: messenger.runtime.getURL("logo.svg")
+    });
+    return { cancel: true };
   });
 }
 

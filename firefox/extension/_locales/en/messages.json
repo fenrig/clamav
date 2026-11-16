@@ -7,6 +7,8 @@
   "settingsIntro": {"message": "Choose when Firefox downloads should be checked by ClamAV."},
   "automaticScanning": {"message": "Scan downloads automatically"},
   "automaticScanningDescription": {"message": "Completed downloads are scanned and detected files are quarantined."},
+  "uploadScanning": {"message": "Warn before uploading dangerous files"},
+  "uploadScanningDescription": {"message": "Recognizable file uploads are checked locally. The first risky upload is paused; repeat it within 15 minutes to continue."},
   "settingsSaved": {"message": "Settings saved."},
   "settingsReadError": {"message": "Unable to read settings."},
   "settingsSaveError": {"message": "Unable to save settings."},
@@ -14,5 +16,9 @@
   "downloadClean": {"message": "ClamAV: download clean"},
   "downloadCleanMessage": {"message": "$filename was scanned and no viruses were found.", "placeholders": {"filename": {"content": "$1"}}},
   "openQuarantine": {"message": " Click this notification to open quarantine."},
-  "downloadScanFailed": {"message": "ClamAV download scan failed"}
+  "downloadScanFailed": {"message": "ClamAV download scan failed"},
+  "uploadThreatWarning": {"message": "ClamAV warning: upload may be dangerous"},
+  "uploadThreatMessage": {"message": "ClamAV detected a threat in $1 for $2. The upload was paused. Review the file, then repeat the upload within 15 minutes if you still want to continue.", "placeholders": {"file": {"content": "$1"}, "site": {"content": "$2"}}},
+  "uploadScanIncomplete": {"message": "ClamAV could not inspect an upload"},
+  "uploadScanIncompleteMessage": {"message": "Could not inspect $1: $2. The upload was not blocked.", "placeholders": {"file": {"content": "$1"}, "error": {"content": "$2"}}}
 }

@@ -40,6 +40,31 @@ const QString configDir = QStringLiteral(CLAMAV_CONF_DIR);
 const QString dataDir = QStringLiteral(CLAMAV_DATA_DIR);
 const QString helper = QStringLiteral(CLAMAV_LIBEXEC_DIR) + QStringLiteral("/clamav-kcm-helper");
 
+QString databaseDirectory()
+{
+    QString directory = dataDir;
+    QFile input(configDir + QStringLiteral("/clamd.conf"));
+    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream stream(&input);
+        while (!stream.atEnd()) {
+            const QString line = stream.readLine().trimmed();
+            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
+                directory = line.section(QLatin1Char(' '), 1).trimmed();
+                break;
+            }
+        }
+    }
+    return directory;
+}
+
+QDateTime databaseLastModified()
+{
+    const QFileInfoList files = QDir(databaseDirectory()).entryInfoList(
+        {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
+        QDir::Files, QDir::Time);
+    return files.isEmpty() ? QDateTime() : files.first().lastModified();
+}
+
 QString serviceState(const QString &unit)
 {
     QProcess process;
@@ -121,18 +146,7 @@ QString clamdCommand(const QByteArray &command)
 
 QString databaseInfo()
 {
-    QString directory = dataDir;
-    QFile input(configDir + QStringLiteral("/clamd.conf"));
-    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream stream(&input);
-        while (!stream.atEnd()) {
-            const QString line = stream.readLine().trimmed();
-            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
-                directory = line.section(QLatin1Char(' '), 1).trimmed();
-                break;
-            }
-        }
-    }
+    const QString directory = databaseDirectory();
     const QFileInfoList files = QDir(directory).entryInfoList(
         {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
         QDir::Files, QDir::Name);
@@ -148,18 +162,7 @@ QString databaseInfo()
 
 QString databaseUpdated()
 {
-    QString directory = dataDir;
-    QFile input(configDir + QStringLiteral("/clamd.conf"));
-    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream stream(&input);
-        while (!stream.atEnd()) {
-            const QString line = stream.readLine().trimmed();
-            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
-                directory = line.section(QLatin1Char(' '), 1).trimmed();
-                break;
-            }
-        }
-    }
+    const QString directory = databaseDirectory();
     const QFileInfoList files = QDir(directory).entryInfoList(
         {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
         QDir::Files, QDir::Time);
@@ -168,18 +171,7 @@ QString databaseUpdated()
 
 bool databaseAvailable()
 {
-    QString directory = dataDir;
-    QFile input(configDir + QStringLiteral("/clamd.conf"));
-    if (input.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream stream(&input);
-        while (!stream.atEnd()) {
-            const QString line = stream.readLine().trimmed();
-            if (line.startsWith(QStringLiteral("DatabaseDirectory "))) {
-                directory = line.section(QLatin1Char(' '), 1).trimmed();
-                break;
-            }
-        }
-    }
+    const QString directory = databaseDirectory();
     return !QDir(directory).entryInfoList(
         {QStringLiteral("main.*"), QStringLiteral("daily.*"), QStringLiteral("bytecode.*")},
         QDir::Files).isEmpty();
@@ -776,7 +768,20 @@ private:
     {
         if (!QFile::exists(configDir + QStringLiteral("/freshclam.conf")) && !runHelper({QStringLiteral("initialize-freshclam")}))
             return;
-        runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-freshclam-once.service")});
+        const auto before = databaseLastModified();
+        if (!runHelper({QStringLiteral("service"), QStringLiteral("start"), QStringLiteral("clamav-freshclam-once.service")}))
+            return;
+        const auto after = databaseLastModified();
+        if (!after.isValid()) {
+            QMessageBox::warning(widget(), i18n("ClamAV"),
+                                 i18n("FreshClam completed, but no virus database is available."));
+        } else if (!before.isValid() || after > before) {
+            QMessageBox::information(widget(), i18n("ClamAV"),
+                                     i18n("The virus database was updated."));
+        } else {
+            QMessageBox::information(widget(), i18n("ClamAV"),
+                                     i18n("The virus database is already up to date."));
+        }
         refreshStatus();
     }
     void enableOnAccess()

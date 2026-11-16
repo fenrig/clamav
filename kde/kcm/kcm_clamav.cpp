@@ -398,7 +398,7 @@ public:
         quarantine->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
         connect(quarantine, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
         addButton(actionLayout, quarantine);
-        auto *scanCommon = new QPushButton(i18n("Scan common folders"), actions);
+        auto *scanCommon = new QPushButton(i18n("Scan home folders"), actions);
         scanCommon->setIcon(QIcon::fromTheme(QStringLiteral("security-high")));
         connect(scanCommon, &QPushButton::clicked, this, &ClamavKCM::scanCommonFolders);
         addButton(actionLayout, scanCommon);
@@ -836,14 +836,14 @@ private:
     static QStringList commonScanPaths()
     {
         QStringList paths;
-        for (const QStandardPaths::StandardLocation location : {
-                 QStandardPaths::DownloadLocation,
-                 QStandardPaths::DesktopLocation,
-                 QStandardPaths::DocumentsLocation}) {
-            const QString path = QStandardPaths::writableLocation(location);
-            if (!path.isEmpty() && QFileInfo(path).isDir() && !paths.contains(path))
-                paths << path;
-        }
+        const QString home = QDir::homePath();
+        if (home.isEmpty() || !QFileInfo(home).isDir())
+            return paths;
+        const QDir homeDirectory(home);
+        for (const QFileInfo &entry : homeDirectory.entryInfoList(
+                 QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable, QDir::Name))
+            if (!entry.fileName().startsWith(QLatin1Char('.')))
+                paths << entry.absoluteFilePath();
         return paths;
     }
     static QStringList removableScanPaths()
@@ -878,7 +878,7 @@ private:
     void scanCommonFolders()
     {
         startQuarantineScan(commonScanPaths(),
-                            i18n("No common user folders were found to scan."));
+                            i18n("No visible folders were found in the home directory."));
     }
     void scanRemovableMedia()
     {

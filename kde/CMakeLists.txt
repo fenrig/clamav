@@ -21,7 +21,7 @@ if(Qt6_FOUND)
     add_custom_target(clamav-dutch-translations ALL DEPENDS ${CLAMAV_SCAN_DUTCH_QM} ${CLAMAV_QUARANTINE_DUTCH_QM})
     add_executable(clamav-scan-gui clamav-scan-gui.cpp)
     target_link_libraries(clamav-scan-gui PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network clamav-quarantine)
     target_compile_definitions(clamav-scan-gui PRIVATE
         CLAMAV_TRANSLATION_DIR="${CMAKE_INSTALL_FULL_DATADIR}/clamav/translations")
     add_dependencies(clamav-scan-gui clamav-dutch-translations)

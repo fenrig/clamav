@@ -9,6 +9,8 @@ static int scan_status;
 
 static void scan_one(const char *path)
 {
+    printf("SCAN_FILE: %s\n", path);
+    fflush(stdout);
     struct json_object *result = scan_file(path, 1, "plasma");
     struct json_object *value;
     const char *message = "Scan failed";
@@ -20,6 +22,7 @@ static void scan_one(const char *path)
     if (json_object_object_get_ex(result, "message", &value))
         message = json_object_get_string(value);
     puts(message);
+    fflush(stdout);
     if (json_object_object_get_ex(result, "infected", &value)
             && json_object_get_boolean(value))
         scan_status = scan_status == 2 ? 2 : 1;

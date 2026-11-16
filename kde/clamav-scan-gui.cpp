@@ -223,6 +223,10 @@ public:
         progress_->setTextVisible(true);
         progress_->setFormat(tr("Scanning…"));
         layout->addWidget(progress_);
+        currentFileLabel_ = new QLabel(tr("Current file: preparing…"), this);
+        currentFileLabel_->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        currentFileLabel_->setWordWrap(false);
+        layout->addWidget(currentFileLabel_);
         auto *activity = new QGroupBox(tr("Scan activity"), this);
         auto *activityLayout = new QVBoxLayout(activity);
         output_ = new QTextEdit(activity);
@@ -259,13 +263,15 @@ public:
 
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
         metricsTimer_.start(500);
-        if (!quarantine_ && QFileInfo(scanner_).fileName() == QStringLiteral("clamdscan")) {
-            connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
-            statsTimer_.start(1000);
-            updateQueue();
-        } else {
-            queueStatus_->setText(tr("Not using the ClamAV daemon"));
-        }
+        connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
+        statsTimer_.start(1000);
+        updateQueue();
+        fileDisplayTimer_.setInterval(150);
+        connect(&fileDisplayTimer_, &QTimer::timeout, this, [this] {
+            if (!currentFile_.isEmpty())
+                currentFileLabel_->setText(tr("Current file: %1").arg(QDir::toNativeSeparators(currentFile_)));
+        });
+        fileDisplayTimer_.start();
     }
 
 private:
@@ -317,6 +323,7 @@ private:
                 lines << QStringLiteral("⚠  Threat found, but quarantine failed");
             } else if (line.startsWith(QStringLiteral("SHA-256:"))
                        || line.startsWith(QStringLiteral("Scanner:"))
+                       || line.startsWith(QStringLiteral("SCAN_FILE: "))
                        || line.contains(QStringLiteral("FILDES"))) {
                 continue;
             } else {
@@ -437,7 +444,13 @@ private:
     {
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
-            rawOutput_ += QString::fromLocal8Bit(text);
+            const QString incoming = QString::fromLocal8Bit(text);
+            for (const QString &sourceLine : incoming.split(QLatin1Char('\n'))) {
+                const QString line = sourceLine.trimmed();
+                if (line.startsWith(QStringLiteral("SCAN_FILE: ")))
+                    currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
+            }
+            rawOutput_ += incoming;
             for (const QString &sourceLine : rawOutput_.split(QLatin1Char('\n'))) {
                 const QString line = sourceLine.trimmed();
                 if (line.startsWith(QStringLiteral("A virus was identified."), Qt::CaseInsensitive)
@@ -504,6 +517,7 @@ private:
         readOutput();
         metricsTimer_.stop();
         statsTimer_.stop();
+        fileDisplayTimer_.stop();
         updateMetrics();
         finished_ = true;
         pulseTimer_.stop();
@@ -526,6 +540,7 @@ private:
         }
         summary_->setText(summary);
         targetSummary_->setText(statusText_);
+        currentFileLabel_->setText(tr("Current file: scan complete"));
         updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
@@ -551,6 +566,7 @@ private:
     QString cpuTarget_ = tr("Scanner");
     QString statusText_;
     QString rawOutput_;
+    QString currentFile_;
     QList<qint64> pids_;
     QProcess *process_ = nullptr;
     QLabel *queueStatus_ = nullptr;
@@ -559,6 +575,7 @@ private:
     QLabel *statusIcon_ = nullptr;
     QLabel *summary_ = nullptr;
     QLabel *targetSummary_ = nullptr;
+    QLabel *currentFileLabel_ = nullptr;
     QFrame *statusCard_ = nullptr;
     QLabel *statusCardTitle_ = nullptr;
     QLabel *statusCardDetails_ = nullptr;
@@ -566,7 +583,7 @@ private:
     QProgressBar *progress_ = nullptr;
     QTextEdit *output_ = nullptr;
     QPushButton *action_ = nullptr;
-    QTimer metricsTimer_, statsTimer_;
+    QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;
     QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
     qint64 cpuSample_ = -1;

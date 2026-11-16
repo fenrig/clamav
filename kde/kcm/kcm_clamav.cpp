@@ -113,6 +113,16 @@ QString systemdProperty(const QString &unit, const QString &property)
     return QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
 }
 
+bool systemdTimestampDue(const QString &unit, const QString &property)
+{
+    bool ok = false;
+    const qint64 timestampUsec = systemdProperty(unit, property).toLongLong(&ok);
+    if (!ok || timestampUsec <= 0)
+        return false;
+    const qint64 nowUsec = QDateTime::currentDateTimeUtc().toMSecsSinceEpoch() * 1000;
+    return timestampUsec <= nowUsec;
+}
+
 QString socketPath()
 {
     const QStringList files = {configDir + QStringLiteral("/clamd.conf"),
@@ -982,10 +992,13 @@ private:
 
         const bool daemonRunning = daemon == QStringLiteral("active");
         const bool updatesRunning = freshclam == QStringLiteral("active") || timer == QStringLiteral("active");
+        const bool freshclamInitialized = QFile::exists(configDir + QStringLiteral("/freshclam.conf"));
+        const bool updateOverdue = freshclamInitialized
+            && serviceEnabled(QStringLiteral("clamav-freshclam-once.timer")) == QStringLiteral("enabled")
+            && systemdTimestampDue(QStringLiteral("clamav-freshclam-once.timer"), QStringLiteral("NextElapseUSecRealtime"));
         const bool databaseReady = databaseAvailable();
         const bool onAccessRunning = onAccess == QStringLiteral("active");
         const bool onAccessConfigured = onAccessPrevention->isChecked();
-        const bool freshclamInitialized = QFile::exists(configDir + QStringLiteral("/freshclam.conf"));
         char quarantinePath[PATH_MAX];
         struct clamav_quarantine_entry *entries = nullptr;
         size_t quarantineItems = 0;
@@ -1025,14 +1038,16 @@ private:
         const QColor red(210, 55, 65);
         setCardState(engineCard, daemonRunning ? green : red);
         setCardState(databaseCard, databaseReady ? green : red);
-        setCardState(updatesCard, !freshclamInitialized ? red : (updatesRunning ? green : yellow));
+        setCardState(updatesCard, !freshclamInitialized || updateOverdue
+            ? (updateOverdue ? yellow : red) : (updatesRunning ? green : yellow));
         setCardState(onAccessCard, onAccessRunning ? green : (onAccessConfigured ? red : yellow));
         setCardState(quarantineCard, quarantineSerious > 0 ? red : (quarantineReview > 0 ? yellow : green));
         engineAction->setVisible(!daemonRunning);
         engineAction->setText(serviceEnabled(QStringLiteral("clamav-daemon.service")) == QStringLiteral("enabled")
             ? i18n("Start now") : i18n("Enable and start"));
-        updatesAction->setVisible(!freshclamInitialized || !updatesRunning);
-        updatesAction->setText(!freshclamInitialized ? i18n("Initialize FreshClam") : i18n("Enable updates"));
+        updatesAction->setVisible(!freshclamInitialized || !updatesRunning || updateOverdue);
+        updatesAction->setText(!freshclamInitialized
+            ? i18n("Initialize FreshClam") : (updateOverdue ? i18n("Update now") : i18n("Enable updates")));
         onAccessAction->setVisible(!onAccessRunning);
         onAccessAction->setText(onAccessConfigured ? i18n("Start protection") : i18n("Enable and start"));
         quarantineAction->setVisible(quarantineReview > 0);
@@ -1061,7 +1076,7 @@ private:
             healthAction->setText(i18n("Start protection"));
             healthActionType = 3;
             healthBanner->setStyleSheet(QStringLiteral("QFrame#healthBanner { background: rgba(210, 55, 65, 45); border: 1px solid rgba(210, 55, 65, 150); border-radius: 8px; }"));
-        } else if (quarantineReview > 0 || !updatesRunning) {
+        } else if (quarantineReview > 0 || !updatesRunning || updateOverdue) {
             setHealthIcon(QStringLiteral("dialog-warning"));
             healthTitle->setText(i18n("Protection is running"));
             if (quarantineReview > 0) {
@@ -1072,6 +1087,10 @@ private:
                                             onAccessRunning ? i18n("enabled") : i18n("not enabled")));
                 healthAction->setText(i18n("Review quarantine"));
                 healthActionType = 4;
+            } else if (updateOverdue) {
+                healthDetails->setText(i18n("The scheduled virus database update is overdue."));
+                healthAction->setText(i18n("Update now"));
+                healthActionType = 2;
             } else if (!updatesRunning) {
                 healthDetails->setText(i18n("ClamAV is available, but automatic virus database updates are not active."));
                 healthAction->setText(i18n("Enable updates"));

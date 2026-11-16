@@ -18,7 +18,7 @@
   "openQuarantine": {"message": " Click this notification to open quarantine."},
   "downloadScanFailed": {"message": "ClamAV download scan failed"},
   "uploadThreatWarning": {"message": "ClamAV warning: upload may be dangerous"},
-  "uploadThreatMessage": {"message": "ClamAV detected a threat in $1 for $2. The upload was paused. Review the file, then repeat the upload within 15 minutes if you still want to continue.", "placeholders": {"file": {"content": "$1"}, "site": {"content": "$2"}}},
+  "uploadThreatMessage": {"message": "ClamAV detected a threat in $file for $site. The upload was paused. Review the file, then repeat the upload within 15 minutes if you still want to continue.", "placeholders": {"file": {"content": "$1"}, "site": {"content": "$2"}}},
   "uploadScanIncomplete": {"message": "ClamAV could not inspect an upload"},
-  "uploadScanIncompleteMessage": {"message": "Could not inspect $1: $2. The upload was not blocked.", "placeholders": {"file": {"content": "$1"}, "error": {"content": "$2"}}}
+  "uploadScanIncompleteMessage": {"message": "Could not inspect $file: $error. The upload was not blocked.", "placeholders": {"file": {"content": "$1"}, "error": {"content": "$2"}}}
 }

@@ -4,6 +4,27 @@ const defaults = { autoScan: true };
 const cacheDefaults = { maxEntries: 1000, maxAgeDays: 180 };
 let accounts = {};
 
+function localizePage() {
+  const token = /__MSG_([A-Za-z0-9_]+)__/g;
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const node of textNodes) {
+    node.nodeValue = node.nodeValue.replace(token, (_, key) => messenger.i18n.getMessage(key) || key);
+  }
+  for (const element of document.querySelectorAll("*")) {
+    for (const attribute of element.attributes) {
+      token.lastIndex = 0;
+      if (token.test(attribute.value)) {
+        token.lastIndex = 0;
+        attribute.value = attribute.value.replace(token, (_, key) => messenger.i18n.getMessage(key) || key);
+      }
+    }
+  }
+}
+
+localizePage();
+
 async function load() {
   const listed = await messenger.accounts.list();
   const stored = await messenger.storage.local.get(["accounts", "cache", "diagnosticLogging", "scanDownloads", "scanOutgoing"]);

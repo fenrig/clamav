@@ -123,6 +123,8 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.css
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.js
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/logo.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/en/messages.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/nl/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/README.md
     DESTINATION
         ${CMAKE_INSTALL_DATADIR}/clamav/thunderbird
@@ -135,6 +137,8 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/en/messages.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/nl/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/README.md
     DESTINATION
         ${CMAKE_INSTALL_DATADIR}/clamav/firefox

@@ -8,6 +8,27 @@ function message(key) {
   return browser.i18n.getMessage(key) || key;
 }
 
+function localizePage() {
+  const token = /__MSG_([A-Za-z0-9_]+)__/g;
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+  for (const node of textNodes) {
+    node.nodeValue = node.nodeValue.replace(token, (_, key) => message(key));
+  }
+  for (const element of document.querySelectorAll("*")) {
+    for (const attribute of element.attributes) {
+      token.lastIndex = 0;
+      if (token.test(attribute.value)) {
+        token.lastIndex = 0;
+        attribute.value = attribute.value.replace(token, (_, key) => message(key));
+      }
+    }
+  }
+}
+
+localizePage();
+
 function showStatus(message) {
   status.textContent = message;
   window.setTimeout(() => {

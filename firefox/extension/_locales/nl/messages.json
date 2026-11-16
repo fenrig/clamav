@@ -18,7 +18,7 @@
   "openQuarantine": {"message": " Klik op deze melding om de quarantaine te openen."},
   "downloadScanFailed": {"message": "ClamAV-downloadscan mislukt"},
   "uploadThreatWarning": {"message": "ClamAV-waarschuwing: upload kan gevaarlijk zijn"},
-  "uploadThreatMessage": {"message": "ClamAV heeft een bedreiging gevonden in $1 voor $2. De upload is gepauzeerd. Controleer het bestand en herhaal de upload binnen 15 minuten als u toch wilt doorgaan.", "placeholders": {"file": {"content": "$1"}, "site": {"content": "$2"}}},
+  "uploadThreatMessage": {"message": "ClamAV heeft een bedreiging gevonden in $file voor $site. De upload is gepauzeerd. Controleer het bestand en herhaal de upload binnen 15 minuten als u toch wilt doorgaan.", "placeholders": {"file": {"content": "$1"}, "site": {"content": "$2"}}},
   "uploadScanIncomplete": {"message": "ClamAV kon een upload niet controleren"},
-  "uploadScanIncompleteMessage": {"message": "Kon $1 niet controleren: $2. De upload is niet geblokkeerd.", "placeholders": {"file": {"content": "$1"}, "error": {"content": "$2"}}}
+  "uploadScanIncompleteMessage": {"message": "Kon $file niet controleren: $error. De upload is niet geblokkeerd.", "placeholders": {"file": {"content": "$1"}, "error": {"content": "$2"}}}
 }

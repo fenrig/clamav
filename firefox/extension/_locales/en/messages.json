@@ -1,0 +1,18 @@
+{
+  "locale": {"message": "en"},
+  "extensionName": {"message": "ClamAV Download Scanner"},
+  "extensionDescription": {"message": "Scan Firefox downloads with ClamAV."},
+  "settingsTitle": {"message": "ClamAV Download Scanner settings"},
+  "settingsHeading": {"message": "ClamAV Download Scanner"},
+  "settingsIntro": {"message": "Choose when Firefox downloads should be checked by ClamAV."},
+  "automaticScanning": {"message": "Scan downloads automatically"},
+  "automaticScanningDescription": {"message": "Completed downloads are scanned and detected files are quarantined."},
+  "settingsSaved": {"message": "Settings saved."},
+  "settingsReadError": {"message": "Unable to read settings."},
+  "settingsSaveError": {"message": "Unable to save settings."},
+  "threatDetected": {"message": "ClamAV: threat detected"},
+  "downloadClean": {"message": "ClamAV: download clean"},
+  "downloadCleanMessage": {"message": "$filename was scanned and no viruses were found.", "placeholders": {"filename": {"content": "$1"}}},
+  "openQuarantine": {"message": " Click this notification to open quarantine."},
+  "downloadScanFailed": {"message": "ClamAV download scan failed"}
+}

@@ -1,0 +1,82 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: clamav-kcm\n"
+"Language: nl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "ClamAV protection"
+msgstr "ClamAV-bescherming"
+
+msgid "Manage malware scanning, on-access protection, and virus database updates."
+msgstr "Beheer malwarescans, toegangsbeveiliging en updates van de virusdatabase."
+
+msgid "Overview"
+msgstr "Overzicht"
+
+msgid "Scanning"
+msgstr "Scannen"
+
+msgid "Updates"
+msgstr "Updates"
+
+msgid "Quarantine"
+msgstr "Quarantaine"
+
+msgid "Security audit"
+msgstr "Beveiligingscontrole"
+
+msgid "Antivirus"
+msgstr "Antivirus"
+
+msgid "Database updates"
+msgstr "Database-updates"
+
+msgid "Virus database"
+msgstr "Virusdatabase"
+
+msgid "On-access protection"
+msgstr "Toegangsbeveiliging"
+
+msgid "Open quarantine"
+msgstr "Quarantaine openen"
+
+msgid "Recommended scans"
+msgstr "Aanbevolen scans"
+
+msgid "Home folders"
+msgstr "Thuismappen"
+
+msgid "Scan visible folders in your home directory. Hidden configuration folders are excluded."
+msgstr "Scan zichtbare mappen in uw persoonlijke map. Verborgen configuratiemappen worden overgeslagen."
+
+msgid "Scan now"
+msgstr "Nu scannen"
+
+msgid "No removable media is currently mounted."
+msgstr "Er is momenteel geen verwisselbaar medium aangekoppeld."
+
+msgid "Quick actions"
+msgstr "Snelle acties"
+
+msgid "Refresh"
+msgstr "Vernieuwen"
+
+msgid "Apply configuration"
+msgstr "Configuratie toepassen"
+
+msgid "System details"
+msgstr "Systeemdetails"
+
+msgid "Running"
+msgstr "Actief"
+
+msgid "Stopped"
+msgstr "Gestopt"
+
+msgid "Unavailable"
+msgstr "Niet beschikbaar"
+
+msgid "Not installed"
+msgstr "Niet geïnstalleerd"

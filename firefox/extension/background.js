@@ -1,6 +1,7 @@
 /* global browser */
 
 const NATIVE_HOST = "org.clamav.thunderbird";
+const message = (key, substitutions) => browser.i18n.getMessage(key, substitutions) || key;
 let nativePort = null;
 let nativeCurrent = null;
 const nativeQueue = [];
@@ -96,21 +97,21 @@ async function scanDownload(downloadId) {
     }
     const notification = {
       type: "basic",
-      title: result.infected ? "ClamAV: threat detected" : "ClamAV: download clean",
+      title: result.infected ? message("threatDetected") : message("downloadClean"),
       message: result.infected
         ? `${filename(download)}: ${result.message}`
-        : `${filename(download)} was scanned and no viruses were found.`
+        : message("downloadCleanMessage", filename(download))
     };
     let notificationId = `clamav-download-${downloadId}`;
     if (result.infected && result.quarantined) {
       notificationId = `clamav-quarantine-${downloadId}`;
-      notification.message += " Click this notification to open quarantine.";
+      notification.message += message("openQuarantine");
     }
     await browser.notifications.create(notificationId, notification);
   } catch (error) {
     await browser.notifications.create(`clamav-download-error-${downloadId}`, {
       type: "basic",
-      title: "ClamAV download scan failed",
+      title: message("downloadScanFailed"),
       message: `${filename(download)}: ${error.message}`
     });
   }

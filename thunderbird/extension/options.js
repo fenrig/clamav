@@ -44,7 +44,7 @@ async function save() {
       maxAgeDays: Math.max(0, Number(document.getElementById("maxAgeDays").value) || 0)
     }
   });
-  document.getElementById("status").textContent = "Saved";
+  document.getElementById("status").textContent = messenger.i18n.getMessage("saved") || "Saved";
 }
 
 document.getElementById("save").addEventListener("click", save);

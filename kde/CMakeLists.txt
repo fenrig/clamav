@@ -8,15 +8,34 @@ endif()
 
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Network)
 if(Qt6_FOUND)
+    find_program(CLAMAV_LRELEASE_EXECUTABLE lrelease REQUIRED)
+    set(CLAMAV_TRANSLATION_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/clamav/translations")
+    set(CLAMAV_SCAN_DUTCH_QM "${CMAKE_CURRENT_BINARY_DIR}/clamav-scan_nl.qm")
+    set(CLAMAV_QUARANTINE_DUTCH_QM "${CMAKE_CURRENT_BINARY_DIR}/clamav-quarantine_nl.qm")
+    add_custom_command(OUTPUT ${CLAMAV_SCAN_DUTCH_QM}
+        COMMAND ${CLAMAV_LRELEASE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/translations/clamav-scan_nl.ts -qm ${CLAMAV_SCAN_DUTCH_QM}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/translations/clamav-scan_nl.ts)
+    add_custom_command(OUTPUT ${CLAMAV_QUARANTINE_DUTCH_QM}
+        COMMAND ${CLAMAV_LRELEASE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/translations/clamav-quarantine_nl.ts -qm ${CLAMAV_QUARANTINE_DUTCH_QM}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/translations/clamav-quarantine_nl.ts)
+    add_custom_target(clamav-dutch-translations ALL DEPENDS ${CLAMAV_SCAN_DUTCH_QM} ${CLAMAV_QUARANTINE_DUTCH_QM})
     add_executable(clamav-scan-gui clamav-scan-gui.cpp)
     target_link_libraries(clamav-scan-gui PRIVATE
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+    target_compile_definitions(clamav-scan-gui PRIVATE
+        CLAMAV_TRANSLATION_DIR="${CMAKE_INSTALL_FULL_DATADIR}/clamav/translations")
+    add_dependencies(clamav-scan-gui clamav-dutch-translations)
     install(TARGETS clamav-scan-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
 
     add_executable(clamav-quarantine-gui clamav-quarantine-gui.cpp)
     target_link_libraries(clamav-quarantine-gui PRIVATE
         Qt6::Core Qt6::Gui Qt6::Widgets clamav-quarantine)
+    target_compile_definitions(clamav-quarantine-gui PRIVATE
+        CLAMAV_TRANSLATION_DIR="${CMAKE_INSTALL_FULL_DATADIR}/clamav/translations")
+    add_dependencies(clamav-quarantine-gui clamav-dutch-translations)
     install(TARGETS clamav-quarantine-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT programs)
+    install(FILES ${CLAMAV_SCAN_DUTCH_QM} ${CLAMAV_QUARANTINE_DUTCH_QM}
+        DESTINATION ${CLAMAV_TRANSLATION_INSTALL_DIR} COMPONENT programs)
 
     add_executable(clamav-scan-quarantine-helper clamav-scan-quarantine.c)
     target_link_libraries(clamav-scan-quarantine-helper PRIVATE

@@ -1,0 +1,18 @@
+{
+  "locale": {"message": "nl"},
+  "extensionName": {"message": "ClamAV-downloadscanner"},
+  "extensionDescription": {"message": "Scan Firefox-downloads met ClamAV."},
+  "settingsTitle": {"message": "ClamAV-downloadscannerinstellingen"},
+  "settingsHeading": {"message": "ClamAV-downloadscanner"},
+  "settingsIntro": {"message": "Kies wanneer Firefox-downloads met ClamAV worden gecontroleerd."},
+  "automaticScanning": {"message": "Downloads automatisch scannen"},
+  "automaticScanningDescription": {"message": "Voltooide downloads worden gescand en gedetecteerde bestanden worden in quarantaine geplaatst."},
+  "settingsSaved": {"message": "Instellingen opgeslagen."},
+  "settingsReadError": {"message": "Instellingen kunnen niet worden gelezen."},
+  "settingsSaveError": {"message": "Instellingen kunnen niet worden opgeslagen."},
+  "threatDetected": {"message": "ClamAV: bedreiging gedetecteerd"},
+  "downloadClean": {"message": "ClamAV: download schoon"},
+  "downloadCleanMessage": {"message": "$filename is gescand; er zijn geen virussen gevonden.", "placeholders": {"filename": {"content": "$1"}}},
+  "openQuarantine": {"message": " Klik op deze melding om de quarantaine te openen."},
+  "downloadScanFailed": {"message": "ClamAV-downloadscan mislukt"}
+}

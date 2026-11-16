@@ -25,6 +25,8 @@
 #include <QSplitter>
 #include <QTextEdit>
 #include <QUrl>
+#include <QLocale>
+#include <QTranslator>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -675,6 +677,10 @@ private:
 int main(int argc, char **argv)
 {
     QApplication application(argc, argv);
+    QTranslator dutch;
+    if (QLocale().language() == QLocale::Dutch
+            && dutch.load(QStringLiteral("clamav-quarantine_nl"), QStringLiteral(CLAMAV_TRANSLATION_DIR)))
+        application.installTranslator(&dutch);
     application.setDesktopFileName(QStringLiteral("clamav-quarantine"));
     QuarantineWindow window;
     window.setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav-quarantine"),

@@ -3,6 +3,10 @@
 const checkbox = document.getElementById("automaticScanning");
 const status = document.getElementById("status");
 
+function message(key) {
+  return browser.i18n.getMessage(key) || key;
+}
+
 function showStatus(message) {
   status.textContent = message;
   window.setTimeout(() => {
@@ -14,11 +18,11 @@ browser.storage.local.get({ automaticScanning: true }).then((settings) => {
   checkbox.checked = settings.automaticScanning !== false;
 }).catch(() => {
   checkbox.checked = true;
-  showStatus("Unable to read settings.");
+  showStatus(message("settingsReadError"));
 });
 
 checkbox.addEventListener("change", () => {
   browser.storage.local.set({ automaticScanning: checkbox.checked })
-    .then(() => showStatus("Settings saved."))
-    .catch(() => showStatus("Unable to save settings."));
+    .then(() => showStatus(message("settingsSaved")))
+    .catch(() => showStatus(message("settingsSaveError")));
 });

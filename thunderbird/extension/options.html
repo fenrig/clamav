@@ -1,33 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="__MSG_locale__">
 <head>
   <meta charset="utf-8">
   <meta name="color-scheme" content="light dark">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ClamAV Thunderbird settings</title>
+  <title>__MSG_settingsTitle__</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <main>
     <header>
-      <h1>ClamAV Thunderbird settings</h1>
-      <p>Manage automatic attachment scanning and the local scan-result cache.</p>
+      <h1>__MSG_settingsHeading__</h1>
+      <p>__MSG_settingsIntro__</p>
     </header>
     <section class="card">
-      <h2>Automatic scanning</h2>
-      <p class="muted">Choose whether new mail attachments are scanned automatically.</p>
-      <label class="field">Mail account <select id="account"></select></label>
-      <label class="check"><input id="autoScan" type="checkbox"> <span>Scan attachments automatically when new mail arrives</span></label>
-      <label class="check"><input id="diagnosticLogging" type="checkbox"> <span>Enable diagnostic scan logging in the Error Console</span></label>
-      <label class="check"><input id="scanDownloads" type="checkbox"> <span>Scan attachments and links saved to disk automatically</span></label>
+      <h2>__MSG_automaticScanning__</h2>
+      <p class="muted">__MSG_automaticScanningDescription__</p>
+      <label class="field">__MSG_mailAccount__ <select id="account"></select></label>
+      <label class="check"><input id="autoScan" type="checkbox"> <span>__MSG_scanAttachments__</span></label>
+      <label class="check"><input id="diagnosticLogging" type="checkbox"> <span>__MSG_diagnosticLogging__</span></label>
+      <label class="check"><input id="scanDownloads" type="checkbox"> <span>__MSG_scanDownloads__</span></label>
     </section>
     <section class="card">
-      <h2>Scan result cache</h2>
-      <p class="muted">Only positive detections are cached by SHA-256; clean and failed scans are never cached.</p>
-      <label class="field">Maximum entries <input id="maxEntries" type="number" min="0" step="1"></label>
-      <label class="field">Maximum age (days) <input id="maxAgeDays" type="number" min="0" step="1"></label>
+      <h2>__MSG_cacheHeading__</h2>
+      <p class="muted">__MSG_cacheDescription__</p>
+      <label class="field">__MSG_maximumEntries__ <input id="maxEntries" type="number" min="0" step="1"></label>
+      <label class="field">__MSG_maximumAge__ <input id="maxAgeDays" type="number" min="0" step="1"></label>
     </section>
-    <footer><button id="save">Save settings</button> <span id="status" role="status" aria-live="polite"></span></footer>
+    <footer><button id="save">__MSG_saveSettings__</button> <span id="status" role="status" aria-live="polite"></span></footer>
   </main>
   <script src="options.js"></script>
 </body>

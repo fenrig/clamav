@@ -22,6 +22,8 @@
 #include <QTextEdit>
 #include <QTextCursor>
 #include <QTimer>
+#include <QLocale>
+#include <QTranslator>
 #include <QVBoxLayout>
 #include <QDialog>
 
@@ -601,6 +603,10 @@ public:
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+    QTranslator dutch;
+    if (QLocale().language() == QLocale::Dutch
+            && dutch.load(QStringLiteral("clamav-scan_nl"), QStringLiteral(CLAMAV_TRANSLATION_DIR)))
+        app.installTranslator(&dutch);
     QCommandLineParser parser;
     parser.addHelpOption();
     QCommandLineOption scannerOption(QStringLiteral("scanner"), QStringLiteral("Scanner executable"), QStringLiteral("scanner"));

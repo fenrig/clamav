@@ -1,6 +1,7 @@
 /* global messenger */
 
 const NATIVE_HOST = "org.clamav.thunderbird";
+const message = (key, substitutions) => messenger.i18n.getMessage(key, substitutions) || key;
 let nativePort = null;
 let nativeCurrent = null;
 const nativeQueue = [];
@@ -129,14 +130,14 @@ async function registerMessageDisplayScripts() {
 
 registerMessageDisplayScripts();
 
-messenger.menus.create({ id: EMAIL_MENU_ID, title: "Scan email for viruses and phishing", contexts: ["message_list"] });
-messenger.menus.create({ id: EMAIL_FORCE_MENU_ID, title: "Force rescan email for viruses and phishing", contexts: ["message_list"] });
-messenger.menus.create({ id: LIBRARY_MENU_ID, title: "Scan full mail library for viruses and phishing", contexts: ["tools_menu"] });
-messenger.menus.create({ id: LIBRARY_CANCEL_MENU_ID, title: "Cancel full mail library scan", contexts: ["tools_menu"], visible: false });
-messenger.menus.create({ id: MESSAGE_MENU_ID, title: "Scan message attachments for viruses", contexts: ["message_list"] });
-messenger.menus.create({ id: MESSAGE_FORCE_MENU_ID, title: "Force rescan all message attachments for viruses", contexts: ["message_list"] });
-messenger.menus.create({ id: MENU_ID, title: "Scan attachment for viruses", contexts: ["message_attachments"] });
-messenger.menus.create({ id: FORCE_MENU_ID, title: "Force rescan attachment for viruses", contexts: ["message_attachments"] });
+messenger.menus.create({ id: EMAIL_MENU_ID, title: message("menuScanEmail"), contexts: ["message_list"] });
+messenger.menus.create({ id: EMAIL_FORCE_MENU_ID, title: message("menuForceScanEmail"), contexts: ["message_list"] });
+messenger.menus.create({ id: LIBRARY_MENU_ID, title: message("menuScanLibrary"), contexts: ["tools_menu"] });
+messenger.menus.create({ id: LIBRARY_CANCEL_MENU_ID, title: message("menuCancelLibrary"), contexts: ["tools_menu"], visible: false });
+messenger.menus.create({ id: MESSAGE_MENU_ID, title: message("menuScanAttachments"), contexts: ["message_list"] });
+messenger.menus.create({ id: MESSAGE_FORCE_MENU_ID, title: message("menuForceScanAttachments"), contexts: ["message_list"] });
+messenger.menus.create({ id: MENU_ID, title: message("menuScanAttachment"), contexts: ["message_attachments"] });
+messenger.menus.create({ id: FORCE_MENU_ID, title: message("menuForceScanAttachment"), contexts: ["message_attachments"] });
 
 function safeFilename(name) {
   return (name || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -483,7 +484,7 @@ async function rescanMessageAttachments(messageId, force = true, quiet = true) {
   try {
     linksScanned = await scanMessageLinks(message.id, message.folder.accountId, false, force, quiet);
   } catch (error) {
-    await createNotification({ type: "basic", title: "ClamAV link scan failed", message: error.message });
+    await createNotification({ type: "basic", title: message("linkScanFailed"), message: error.message });
   }
   const attachments = await messenger.messages.listAttachments(message.id);
   for (const attachment of attachments) {

@@ -1,7 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "ClamAV Download Scanner",
-  "description": "Scan Firefox downloads with ClamAV.",
+  "name": "__MSG_extensionName__",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "version": "1.0.1",
   "browser_specific_settings": {
     "gecko": {

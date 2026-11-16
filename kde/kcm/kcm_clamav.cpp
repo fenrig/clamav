@@ -246,6 +246,7 @@ public:
     explicit ClamavKCM(QObject *parent, const KPluginMetaData &data)
         : KCModule(qobject_cast<QWidget *>(parent), data)
     {
+        KLocalizedString::setApplicationDomain("kcm_clamav");
         auto *root = new QVBoxLayout(widget());
         root->setSpacing(16);
         widget()->setStyleSheet(QStringLiteral(

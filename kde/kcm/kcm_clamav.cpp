@@ -369,6 +369,10 @@ public:
         connect(onAccessAction, &QPushButton::clicked, this, &ClamavKCM::enableOnAccess);
         connect(quarantineAction, &QPushButton::clicked, this, &ClamavKCM::openQuarantine);
 
+        recommendedScans = new QGroupBox(i18n("Recommended scans"), overviewPage);
+        recommendedScansLayout = new QGridLayout(recommendedScans);
+        overviewLayout->addWidget(recommendedScans);
+
         auto *statusBox = new QGroupBox(i18n("System details"), widget());
         auto *status = new QFormLayout(statusBox);
         clamdStatus = new QLabel;
@@ -649,6 +653,8 @@ private:
     QPushButton *healthAction;
     int healthActionType = 0;
     QFrame *engineCard, *updatesCard, *databaseCard, *onAccessCard, *quarantineCard;
+    QGroupBox *recommendedScans;
+    QGridLayout *recommendedScansLayout;
     QLabel *engineOverview, *updatesOverview, *databaseOverview, *onAccessOverview, *quarantineOverview;
     QPushButton *engineAction, *updatesAction, *databaseAction, *onAccessAction, *quarantineAction;
     QLabel *clamdStatus, *freshclamStatus, *onAccessStatus, *timerStatus, *databaseStatus;
@@ -864,6 +870,56 @@ private:
         }
         return paths;
     }
+    void refreshRecommendedScans()
+    {
+        while (QLayoutItem *item = recommendedScansLayout->takeAt(0)) {
+            if (QWidget *card = item->widget())
+                card->deleteLater();
+            delete item;
+        }
+        const auto addSuggestion = [this](const QString &title, const QString &description,
+                                           const QStringList &paths, const QIcon &icon) {
+            auto *card = new QFrame(recommendedScans);
+            card->setObjectName(QStringLiteral("recommendedScanCard"));
+            card->setStyleSheet(QStringLiteral(
+                "QFrame#recommendedScanCard { background: rgba(80, 170, 100, 35); border: 1px solid rgba(80, 170, 100, 150); border-radius: 8px; }"
+                "QFrame#recommendedScanCard QLabel { color: palette(window-text); border: none; background: transparent; }"));
+            auto *cardLayout = new QVBoxLayout(card);
+            auto *heading = new QLabel(title, card);
+            heading->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(window-text);"));
+            auto *details = new QLabel(description, card);
+            details->setWordWrap(true);
+            details->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+            auto *scan = new QPushButton(i18n("Scan now"), card);
+            scan->setIcon(icon);
+            connect(scan, &QPushButton::clicked, this, [this, paths] {
+                startQuarantineScan(paths, i18n("The selected scan target is no longer available."));
+            });
+            cardLayout->addWidget(heading);
+            cardLayout->addWidget(details);
+            cardLayout->addWidget(scan);
+            const int index = recommendedScansLayout->count();
+            recommendedScansLayout->addWidget(card, index / 2, index % 2);
+        };
+        addSuggestion(i18n("Home folders"),
+                      i18n("Scan visible folders in your home directory. Hidden configuration folders are excluded."),
+                      commonScanPaths(), QIcon::fromTheme(QStringLiteral("security-high")));
+        const QStringList removable = removableScanPaths();
+        for (const QString &path : removable) {
+            const QStorageInfo volume(path);
+            const QString title = volume.displayName().isEmpty()
+                ? i18n("Removable media") : i18n("Removable media: %1", volume.displayName());
+            addSuggestion(title,
+                          i18n("Scan %1 recursively and quarantine detected threats on this computer.")
+                              .arg(QDir::toNativeSeparators(path)),
+                          QStringList{path}, QIcon::fromTheme(QStringLiteral("drive-removable-media")));
+        }
+        if (removable.isEmpty()) {
+            auto *none = new QLabel(i18n("No removable media is currently mounted."), recommendedScans);
+            none->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+            recommendedScansLayout->addWidget(none, 0, 1);
+        }
+    }
     void startQuarantineScan(const QStringList &paths, const QString &emptyMessage)
     {
         if (paths.isEmpty()) {
@@ -896,6 +952,7 @@ private:
     }
     void refreshStatus()
     {
+        refreshRecommendedScans();
         if (!pendingChanges)
             loadTimerSettings();
         const QString daemon = serviceState(QStringLiteral("clamav-daemon.service"));

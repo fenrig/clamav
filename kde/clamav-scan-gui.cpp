@@ -228,7 +228,7 @@ public:
         output_ = new QTextEdit(activity);
         output_->setReadOnly(true);
         output_->setLineWrapMode(QTextEdit::NoWrap);
-        output_->setPlaceholderText(tr("Scanner output will appear here."));
+        output_->setPlaceholderText(tr("Threats will appear here if ClamAV detects any."));
         output_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         activityLayout->addWidget(output_);
         layout->addWidget(activity, 1);
@@ -308,7 +308,7 @@ private:
             if (line.isEmpty())
                 continue;
             if (line.startsWith(QStringLiteral("No viruses found."))) {
-                lines << QStringLiteral("✓  No threats found");
+                continue;
             } else if (line.startsWith(QStringLiteral("A virus was identified."))) {
                 lines << QStringLiteral("⚠  Threat detected");
             } else if (line.startsWith(QStringLiteral("Quarantined:"))) {
@@ -329,16 +329,10 @@ private:
                     continue;
                 }
             }
-            if (line.endsWith(QStringLiteral(" OK"))) {
-                const QString path = line.left(line.size() - 3).trimmed();
-                lines << tr("✓  Checked: %1 — no threats found")
-                    .arg(QFileInfo(path).fileName().isEmpty() ? path : QFileInfo(path).fileName());
-            } else if (line.contains(QStringLiteral(" FOUND"))) {
+            if (line.endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
                 const QString path = line.left(line.indexOf(QStringLiteral(" FOUND"))).trimmed();
                 lines << tr("⚠  Threat detected: %1")
                     .arg(QFileInfo(path.section(QLatin1Char(':'), 0, 0)).fileName());
-            } else {
-                lines << line;
             }
         }
         return lines.join(QLatin1Char('\n'));

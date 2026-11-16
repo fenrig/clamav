@@ -319,7 +319,17 @@ private:
                        || line.startsWith(QStringLiteral("Scanner:"))
                        || line.contains(QStringLiteral("FILDES"))) {
                 continue;
-            } else if (line.endsWith(QStringLiteral(" OK"))) {
+            } else {
+                const QRegularExpression descriptor(QStringLiteral("^fd\\[\\d+\\]:\\s*(.+)$"));
+                const auto match = descriptor.match(line);
+                if (match.hasMatch() && match.captured(1).compare(QStringLiteral("OK"), Qt::CaseInsensitive) == 0)
+                    continue;
+                if (match.hasMatch() && match.captured(1).endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
+                    lines << tr("⚠  Threat detected: %1").arg(match.captured(1).left(match.captured(1).size() - 6).trimmed());
+                    continue;
+                }
+            }
+            if (line.endsWith(QStringLiteral(" OK"))) {
                 const QString path = line.left(line.size() - 3).trimmed();
                 lines << tr("✓  Checked: %1 — no threats found")
                     .arg(QFileInfo(path).fileName().isEmpty() ? path : QFileInfo(path).fileName());

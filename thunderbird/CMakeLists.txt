@@ -65,7 +65,8 @@ set(CLAMAV_FIREFOX_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/background.js
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
-    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/logo.svg)
 list(APPEND CLAMAV_FIREFOX_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/en/messages.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/nl/messages.json)
@@ -74,7 +75,7 @@ add_custom_command(
         ${CLAMAV_FIREFOX_XPI}
     COMMAND
         ${CMAKE_COMMAND} -E tar cf ${CLAMAV_FIREFOX_XPI}
-            --format=zip manifest.json background.js options.html options.css options.js
+            --format=zip manifest.json background.js options.html options.css options.js logo.svg
             _locales/en/messages.json _locales/nl/messages.json
     DEPENDS
         ${CLAMAV_FIREFOX_EXTENSION_FILES}
@@ -137,6 +138,7 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/logo.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/en/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/nl/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/README.md

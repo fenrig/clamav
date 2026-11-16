@@ -4,6 +4,11 @@
   "description": "__MSG_extensionDescription__",
   "default_locale": "en",
   "version": "1.0.2",
+  "icons": {
+    "16": "logo.svg",
+    "32": "logo.svg",
+    "48": "logo.svg"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "clamav-firefox@clamav.net",

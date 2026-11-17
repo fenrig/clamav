@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColor>
+#include <QBrush>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -59,6 +60,8 @@ static QString localDescription(const QString &detection)
 static int threatLevel(const QString &detection)
 {
     const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
+    if (name.compare(QStringLiteral("Manually quarantined"), Qt::CaseInsensitive) == 0)
+        return 0;
     if (name.startsWith(QStringLiteral("Eicar"), Qt::CaseInsensitive))
         return 1;
     if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
@@ -73,6 +76,8 @@ static int threatLevel(const QString &detection)
 static QString threatLabel(const QString &detection)
 {
     switch (threatLevel(detection)) {
+    case 0:
+        return QObject::tr("Unknown") + QStringLiteral(" (?)");
     case 1:
         return QObject::tr("Test signature — harmless");
     case 2:
@@ -87,6 +92,8 @@ static QString threatLabel(const QString &detection)
 static QColor threatTint(const QString &detection)
 {
     const QString name = detection.section('\n', 0, 0).section(QStringLiteral(": "), -1).trimmed();
+    if (name.compare(QStringLiteral("Manually quarantined"), Qt::CaseInsensitive) == 0)
+        return QColor(61, 174, 233, 55);
     if (name.startsWith(QStringLiteral("Eicar"), Qt::CaseInsensitive))
         return QColor(80, 170, 100, 45);
     if (name.startsWith(QStringLiteral("PUA."), Qt::CaseInsensitive)
@@ -501,11 +508,15 @@ private:
         size_t review = 0;
         size_t tests = 0;
         size_t pending = 0;
+        size_t unknown = 0;
         for (size_t i = 0; i < count; ++i) {
             const auto &entry = entries[i];
             if (!entry.payload_available)
                 ++pending;
             switch (threatLevel(QString::fromLocal8Bit(entry.detection))) {
+            case 0:
+                ++unknown;
+                break;
             case 1:
                 ++tests;
                 break;
@@ -531,6 +542,13 @@ private:
             detectionItem->setData(Qt::UserRole + 5, entry.created);
             detectionItem->setData(Qt::UserRole + 6, entry.payload_available);
             detectionItem->setData(Qt::UserRole + 7, QString::fromLocal8Bit(entry.quarantine_reason));
+            if (threatLevel(QString::fromLocal8Bit(entry.detection)) == 0) {
+                const QIcon questionIcon = QIcon::fromTheme(QStringLiteral("dialog-question"));
+                if (!questionIcon.isNull())
+                    detectionItem->setIcon(questionIcon);
+                else
+                    detectionItem->setText(QStringLiteral("? ") + detectionItem->text());
+            }
             table->setItem(row, 0, detectionItem);
             const QString component = QString::fromLocal8Bit(entry.component);
             auto *componentItem = new QTableWidgetItem(entry.payload_available
@@ -541,11 +559,16 @@ private:
             const QColor tint = threatTint(QString::fromLocal8Bit(entry.detection));
             for (QTableWidgetItem *item : {detectionItem, componentItem, dateItem})
                 item->setBackground(tint);
+            if (threatLevel(QString::fromLocal8Bit(entry.detection)) == 0) {
+                const QBrush unknownBrush(QColor(61, 174, 233));
+                for (QTableWidgetItem *item : {detectionItem, componentItem, dateItem})
+                    item->setForeground(unknownBrush);
+            }
             table->setItem(row, 1, componentItem);
             table->setItem(row, 2, dateItem);
         }
         clamav_quarantine_list_free(entries);
-        updateStatusHeader(serious, review, tests, pending);
+        updateStatusHeader(serious, review, tests, pending, unknown);
         addFromEmptyButton->setVisible(count == 0);
         viewQuarantineButton->setVisible(count > 0);
         table->setSortingEnabled(true);
@@ -567,7 +590,7 @@ private:
         return QObject::tr("%1 GiB").arg(size / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
     }
 
-    void updateStatusHeader(size_t serious, size_t review, size_t tests, size_t pending)
+    void updateStatusHeader(size_t serious, size_t review, size_t tests, size_t pending, size_t unknown = 0)
     {
         if (pending > 0) {
             statusHeaderTitle->setText(tr("Action required"));
@@ -585,6 +608,10 @@ private:
             statusHeaderTitle->setText(tr("No action required"));
             statusHeaderDetails->setText(tr("Only %1 harmless antivirus test signature(s) are quarantined. EICAR files can be safely deleted.").arg(tests));
             setStatusHeader(QStringLiteral("emblem-ok"), QColor(80, 170, 100));
+        } else if (unknown > 0) {
+            statusHeaderTitle->setText(tr("Unknown"));
+            statusHeaderDetails->setText(tr("No quarantined files need your attention."));
+            setStatusHeader(QStringLiteral("dialog-question"), QColor(61, 174, 233));
         } else {
             statusHeaderTitle->setText(tr("Quarantine is clear"));
             statusHeaderDetails->setText(tr("No quarantined files need your attention."));

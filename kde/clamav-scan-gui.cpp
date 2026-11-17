@@ -406,6 +406,14 @@ public:
         virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailsPanel_);
         detailQuarantineButton_ = new QPushButton(tr("Quarantine"), detailsPanel_);
         detailDeleteButton_ = new QPushButton(tr("Delete permanently"), detailsPanel_);
+        lookupButton_->setIcon(QIcon::fromTheme(QStringLiteral("system-search"),
+                                                QIcon::fromTheme(QStringLiteral("search"))));
+        virusTotalButton_->setIcon(QIcon::fromTheme(QStringLiteral("applications-internet"),
+                                                     QIcon::fromTheme(QStringLiteral("internet-services"))));
+        detailQuarantineButton_->setIcon(QIcon::fromTheme(QStringLiteral("security-high"),
+                                                           QIcon::fromTheme(QStringLiteral("folder-locked"))));
+        detailDeleteButton_->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete"),
+                                                       QIcon::fromTheme(QStringLiteral("delete"))));
         detailActions->addWidget(lookupButton_);
         detailActions->addWidget(virusTotalButton_);
         detailActions->addWidget(detailQuarantineButton_);
@@ -710,17 +718,13 @@ private:
             const QColor color = detectionLevelColor(level);
             auto *item = new QListWidgetItem(detectionsList_);
             auto *row = new QFrame(detectionsList_);
+            row->setObjectName(QStringLiteral("detectionRow"));
             row->setStyleSheet(QStringLiteral(
-                "QFrame { background: rgba(%1, %2, %3, 35); border: 1px solid rgba(%1, %2, %3, 120);"
+                "QFrame#detectionRow { background: rgba(%1, %2, %3, 35); border: 1px solid rgba(%1, %2, %3, 120);"
                 " border-left: 5px solid rgb(%1, %2, %3); border-radius: 5px; }")
                 .arg(color.red()).arg(color.green()).arg(color.blue()));
             auto *rowLayout = new QVBoxLayout(row);
             rowLayout->setContentsMargins(10, 8, 10, 8);
-            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓ ") : QStringLiteral("○ "), row);
-            handledState->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: %1;")
-                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
-                                                              : QStringLiteral("palette(mid)")));
-            rowLayout->addWidget(handledState);
             auto *file = new QLabel(QDir::toNativeSeparators(detected.path), row);
             file->setToolTip(detected.path);
             file->setStyleSheet(QStringLiteral("font-weight: 600;"));
@@ -729,9 +733,16 @@ private:
             levelLabel->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
                                        .arg(color.red()).arg(color.green()).arg(color.blue()));
             rowLayout->addWidget(levelLabel);
+            auto *detectionLine = new QHBoxLayout;
+            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓") : QStringLiteral("○"), row);
+            handledState->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: %1;")
+                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
+                                                              : QStringLiteral("palette(mid)")));
+            detectionLine->addWidget(handledState);
             auto *detection = new QLabel(detected.detection, row);
             detection->setWordWrap(true);
-            rowLayout->addWidget(detection);
+            detectionLine->addWidget(detection, 1);
+            rowLayout->addLayout(detectionLine);
             if (detected.deleted) {
                 auto *deleted = new QLabel(tr("✓ Deleted"), row);
                 deleted->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
@@ -848,7 +859,12 @@ private:
 
     void cancelOrClose()
     {
-        if (finished_) { accept(); return; }
+        if (!confirmCloseWithUnhandledInfections())
+            return;
+        if (finished_) {
+            accept();
+            return;
+        }
         cancelled_ = true;
         action_->setEnabled(false);
         process_->terminate();
@@ -908,9 +924,33 @@ private:
 
     void closeEvent(QCloseEvent *event) override
     {
+        if (!confirmCloseWithUnhandledInfections()) {
+            event->ignore();
+            return;
+        }
         if (!finished_ && process_->state() != QProcess::NotRunning)
             process_->kill();
         event->accept();
+    }
+
+    bool confirmCloseWithUnhandledInfections()
+    {
+        const int pending = std::count_if(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                                          [](const DetectionEntry &entry) {
+                                              return !entry.handled && !entry.deleted;
+                                          });
+        if (pending == 0)
+            return true;
+
+        QMessageBox warning(this);
+        warning.setIcon(QMessageBox::Critical);
+        warning.setWindowTitle(tr("Unhandled infections"));
+        warning.setText(QStringLiteral("<span style=\"color:#da4453; font-weight:600;\">%1</span>")
+                        .arg(tr("%1 infection(s) are still unhandled.").arg(pending)));
+        warning.setInformativeText(tr("Closing this window will leave the infected files in place. Are you sure you want to continue?"));
+        warning.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+        warning.setDefaultButton(QMessageBox::No);
+        return warning.exec() == QMessageBox::Yes;
     }
 
     void quarantineDetectedFiles()

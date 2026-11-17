@@ -46,6 +46,7 @@
 #include <cmath>
 #include <chrono>
 #include <dirent.h>
+#include <signal.h>
 #include <unistd.h>
 #include <utility>
 
@@ -449,7 +450,12 @@ public:
             quarantineDetectedFiles();
         });
         buttons->addWidget(quarantineButton_);
-        action_ = new QPushButton(tr("Cancel"), this);
+        pauseButton_ = new QPushButton(tr("Pause scan"), this);
+        pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+        pauseButton_->setEnabled(false);
+        connect(pauseButton_, &QPushButton::clicked, this, [this] { pauseOrResumeScan(); });
+        buttons->addWidget(pauseButton_);
+        action_ = new QPushButton(tr("Stop scan"), this);
         connect(action_, &QPushButton::clicked, this, [this] { cancelOrClose(); });
         buttons->addWidget(action_);
         scanLayout->addLayout(buttons);
@@ -668,6 +674,7 @@ private:
         finished_ = false;
         waitingForTargets_ = false;
         cancelled_ = false;
+        paused_ = false;
         infectionDetected_ = false;
         infectionDetected_ = !detectedFiles_.isEmpty();
         currentDetectionKeys_.clear();
@@ -683,7 +690,10 @@ private:
         progress_->setRange(0, 0);
         progress_->setFormat(tr("Scanning…"));
         action_->setEnabled(true);
-        action_->setText(tr("Cancel"));
+        action_->setText(tr("Stop scan"));
+        pauseButton_->setText(tr("Pause scan"));
+        pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+        pauseButton_->setEnabled(true);
         setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar());
         started_ = std::chrono::steady_clock::now();
         pulseOn_ = false;
@@ -718,6 +728,10 @@ private:
             color = blue;
             title = tr("Choose scan locations");
             details = tr("Add at least one file or folder, then start the scan.");
+        } else if (running && paused_) {
+            color = QColor(243, 156, 18);
+            title = tr("Scan paused");
+            details = tr("The scan is paused. Resume or stop the scan when ready.");
         } else if (running && pending > 0) {
             color = red;
             title = tr("Threat detected");
@@ -1243,12 +1257,46 @@ private:
             return;
         }
         cancelled_ = true;
+        if (paused_) {
+            ::kill(static_cast<pid_t>(process_->processId()), SIGCONT);
+            paused_ = false;
+        }
+        pauseButton_->setEnabled(false);
         action_->setEnabled(false);
         process_->terminate();
         QTimer::singleShot(1500, this, [this] {
             if (process_->state() != QProcess::NotRunning)
                 process_->kill();
         });
+    }
+
+    void pauseOrResumeScan()
+    {
+        if (!process_ || process_->state() == QProcess::NotRunning || finished_)
+            return;
+        const pid_t pid = static_cast<pid_t>(process_->processId());
+        if (pid <= 0)
+            return;
+        if (paused_) {
+            if (::kill(pid, SIGCONT) != 0)
+                return;
+            paused_ = false;
+            pauseButton_->setText(tr("Pause scan"));
+            pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+            progress_->setFormat(tr("Scanning…"));
+            summary_->setText(tr("Scan resumed."));
+            pulseTimer_.start();
+        } else {
+            if (::kill(pid, SIGSTOP) != 0)
+                return;
+            paused_ = true;
+            pauseButton_->setText(tr("Resume scan"));
+            pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
+            progress_->setFormat(tr("Paused"));
+            summary_->setText(tr("Scan paused."));
+            pulseTimer_.stop();
+        }
+        updateStatusCard();
     }
 
     void scanFinished(int exitCode)
@@ -1259,6 +1307,7 @@ private:
         fileDisplayTimer_.stop();
         updateMetrics();
         finished_ = true;
+        paused_ = false;
         waitingForTargets_ = false;
         pulseTimer_.stop();
         resultCode_ = cancelled_ ? 130 : (exitCode == 0 ? 0 : exitCode == 1 ? 1 : (exitCode == 0 ? 1 : exitCode));
@@ -1284,6 +1333,7 @@ private:
         updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
+        pauseButton_->setEnabled(false);
         rescanButton_->setText(tr("Rescan"));
         setTargetEditingEnabled(true);
         if (infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
@@ -1573,6 +1623,7 @@ private:
     QProgressBar *progress_ = nullptr;
     QListWidget *activityList_ = nullptr;
     QPushButton *action_ = nullptr;
+    QPushButton *pauseButton_ = nullptr;
     QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;
     QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
@@ -1580,7 +1631,7 @@ private:
     QPair<qint64, qint64> ioSample_ = {-1, -1};
     double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0, ioPeak_ = 0.0;
     qint64 ioTotalRead_ = 0, ioTotalWrite_ = 0;
-    bool cancelled_ = false, finished_ = false, infectionDetected_ = false, pulseOn_ = false;
+    bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
     int resultCode_ = 130;
 
 public:

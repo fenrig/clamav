@@ -14,15 +14,15 @@
   "settingsSaveError": {"message": "Unable to save settings."},
   "threatDetected": {"message": "ClamAV: threat detected"},
   "downloadQuarantined": {"message": "File moved to quarantine"},
-  "downloadQuarantinedMessage": {"message": "$filename was isolated. Click this notification to review it in quarantine.", "placeholders": {"filename": {"content": "$1"}}},
-  "downloadThreatMessage": {"message": "A threat was found in $filename. Review the scan result before using this file.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadQuarantinedMessage": {"message": "$filename$ was isolated. Click this notification to review it in quarantine.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadThreatMessage": {"message": "A threat was found in $filename$. Review the scan result before using this file.", "placeholders": {"filename": {"content": "$1"}}},
   "downloadClean": {"message": "ClamAV: download clean"},
-  "downloadCleanMessage": {"message": "$filename was scanned and no viruses were found.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadCleanMessage": {"message": "$filename$ was scanned and no viruses were found.", "placeholders": {"filename": {"content": "$1"}}},
   "openQuarantine": {"message": " Click this notification to open quarantine."},
   "downloadScanFailed": {"message": "Could not check download"},
-  "downloadScanFailedMessage": {"message": "We could not complete the safety check for $filename.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadScanFailedMessage": {"message": "We could not complete the safety check for $filename$.", "placeholders": {"filename": {"content": "$1"}}},
   "uploadThreatWarning": {"message": "ClamAV warning: upload may be dangerous"},
-  "uploadThreatMessage": {"message": "A threat was found in $file. The upload was paused. Review the file before trying again.", "placeholders": {"file": {"content": "$1"}}},
+  "uploadThreatMessage": {"message": "A threat was found in $file$. The upload was paused. Review the file before trying again.", "placeholders": {"file": {"content": "$1"}}},
   "uploadScanIncomplete": {"message": "ClamAV could not inspect an upload"},
-  "uploadScanIncompleteMessage": {"message": "We could not complete the safety check for $file. The upload was not blocked.", "placeholders": {"file": {"content": "$1"}}}
+  "uploadScanIncompleteMessage": {"message": "We could not complete the safety check for $file$. The upload was not blocked.", "placeholders": {"file": {"content": "$1"}}}
 }

@@ -14,15 +14,15 @@
   "settingsSaveError": {"message": "Instellingen kunnen niet worden opgeslagen."},
   "threatDetected": {"message": "ClamAV: bedreiging gedetecteerd"},
   "downloadQuarantined": {"message": "Bestand in quarantaine geplaatst"},
-  "downloadQuarantinedMessage": {"message": "$filename is geïsoleerd. Klik op deze melding om de quarantaine te bekijken.", "placeholders": {"filename": {"content": "$1"}}},
-  "downloadThreatMessage": {"message": "Er is een bedreiging gevonden in $filename. Bekijk het scanresultaat voordat u het bestand gebruikt.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadQuarantinedMessage": {"message": "$filename$ is geïsoleerd. Klik op deze melding om de quarantaine te bekijken.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadThreatMessage": {"message": "Er is een bedreiging gevonden in $filename$. Bekijk het scanresultaat voordat u het bestand gebruikt.", "placeholders": {"filename": {"content": "$1"}}},
   "downloadClean": {"message": "ClamAV: download schoon"},
-  "downloadCleanMessage": {"message": "$filename is gescand; er zijn geen virussen gevonden.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadCleanMessage": {"message": "$filename$ is gescand; er zijn geen virussen gevonden.", "placeholders": {"filename": {"content": "$1"}}},
   "openQuarantine": {"message": " Klik op deze melding om de quarantaine te openen."},
   "downloadScanFailed": {"message": "Download kon niet worden gecontroleerd"},
-  "downloadScanFailedMessage": {"message": "De veiligheidscontrole voor $filename kon niet worden voltooid.", "placeholders": {"filename": {"content": "$1"}}},
+  "downloadScanFailedMessage": {"message": "De veiligheidscontrole voor $filename$ kon niet worden voltooid.", "placeholders": {"filename": {"content": "$1"}}},
   "uploadThreatWarning": {"message": "ClamAV-waarschuwing: upload kan gevaarlijk zijn"},
-  "uploadThreatMessage": {"message": "Er is een bedreiging gevonden in $file. De upload is gepauzeerd. Controleer het bestand voordat u opnieuw probeert.", "placeholders": {"file": {"content": "$1"}}},
+  "uploadThreatMessage": {"message": "Er is een bedreiging gevonden in $file$. De upload is gepauzeerd. Controleer het bestand voordat u opnieuw probeert.", "placeholders": {"file": {"content": "$1"}}},
   "uploadScanIncomplete": {"message": "ClamAV kon een upload niet controleren"},
-  "uploadScanIncompleteMessage": {"message": "De veiligheidscontrole voor $file kon niet worden voltooid. De upload is niet geblokkeerd.", "placeholders": {"file": {"content": "$1"}}}
+  "uploadScanIncompleteMessage": {"message": "De veiligheidscontrole voor $file$ kon niet worden voltooid. De upload is niet geblokkeerd.", "placeholders": {"file": {"content": "$1"}}}
 }

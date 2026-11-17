@@ -27,7 +27,7 @@ localizePage();
 
 async function load() {
   const listed = await messenger.accounts.list();
-  const stored = await messenger.storage.local.get(["accounts", "cache", "diagnosticLogging", "scanDownloads", "scanOutgoing"]);
+  const stored = await messenger.storage.local.get(["accounts", "cache", "diagnosticLogging", "scanDownloads", "scanOutgoing", "cleanNotifications"]);
   accounts = stored.accounts || {};
   const select = document.getElementById("account");
   for (const account of listed.filter(item => item.id)) {
@@ -42,6 +42,7 @@ async function load() {
   document.getElementById("diagnosticLogging").checked = stored.diagnosticLogging === true;
   document.getElementById("scanDownloads").checked = stored.scanDownloads !== false;
   document.getElementById("scanOutgoing").checked = stored.scanOutgoing !== false;
+  document.getElementById("cleanNotifications").checked = stored.cleanNotifications === true;
   select.addEventListener("change", showAccount);
   showAccount();
 }
@@ -61,6 +62,7 @@ async function save() {
     diagnosticLogging: document.getElementById("diagnosticLogging").checked,
     scanDownloads: document.getElementById("scanDownloads").checked,
     scanOutgoing: document.getElementById("scanOutgoing").checked,
+    cleanNotifications: document.getElementById("cleanNotifications").checked,
     cache: {
       ...(old.cache || {}),
       maxEntries: Math.max(0, Number(document.getElementById("maxEntries").value) || 0),

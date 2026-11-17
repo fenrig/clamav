@@ -2,6 +2,7 @@
 
 const checkbox = document.getElementById("automaticScanning");
 const uploadCheckbox = document.getElementById("uploadScanning");
+const cleanCheckbox = document.getElementById("cleanNotifications");
 const status = document.getElementById("status");
 
 function message(key) {
@@ -36,11 +37,13 @@ function showStatus(message) {
   }, 1800);
 }
 
-browser.storage.local.get({ automaticScanning: true, uploadScanning: true }).then((settings) => {
+browser.storage.local.get({ automaticScanning: true, uploadScanning: true, cleanNotifications: false }).then((settings) => {
   checkbox.checked = settings.automaticScanning !== false;
   uploadCheckbox.checked = settings.uploadScanning !== false;
+  cleanCheckbox.checked = settings.cleanNotifications === true;
 }).catch(() => {
   checkbox.checked = true;
+  cleanCheckbox.checked = false;
   showStatus(message("settingsReadError"));
 });
 
@@ -52,6 +55,12 @@ checkbox.addEventListener("change", () => {
 
 uploadCheckbox.addEventListener("change", () => {
   browser.storage.local.set({ uploadScanning: uploadCheckbox.checked })
+    .then(() => showStatus(message("settingsSaved")))
+    .catch(() => showStatus(message("settingsSaveError")));
+});
+
+cleanCheckbox.addEventListener("change", () => {
+  browser.storage.local.set({ cleanNotifications: cleanCheckbox.checked })
     .then(() => showStatus(message("settingsSaved")))
     .catch(() => showStatus(message("settingsSaveError")));
 });

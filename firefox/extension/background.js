@@ -10,13 +10,16 @@ const uploadOverrides = new Map();
 const UPLOAD_OVERRIDE_TTL_MS = 15 * 60 * 1000;
 let automaticScanning = true;
 let uploadScanning = true;
+let cleanNotifications = false;
 
-const automaticScanningReady = browser.storage.local.get({ automaticScanning: true, uploadScanning: true }).then((settings) => {
+const automaticScanningReady = browser.storage.local.get({ automaticScanning: true, uploadScanning: true, cleanNotifications: false }).then((settings) => {
   automaticScanning = settings.automaticScanning !== false;
   uploadScanning = settings.uploadScanning !== false;
+  cleanNotifications = settings.cleanNotifications === true;
 }).catch(() => {
   automaticScanning = true;
   uploadScanning = true;
+  cleanNotifications = false;
 });
 
 browser.storage.onChanged.addListener((changes, areaName) => {
@@ -24,7 +27,16 @@ browser.storage.onChanged.addListener((changes, areaName) => {
     automaticScanning = changes.automaticScanning.newValue !== false;
   if (areaName === "local" && changes.uploadScanning)
     uploadScanning = changes.uploadScanning.newValue !== false;
+  if (areaName === "local" && changes.cleanNotifications)
+    cleanNotifications = changes.cleanNotifications.newValue === true;
 });
+
+function notificationIcon(kind = "default") {
+  const filename = kind === "success"
+    ? "notification-success.svg"
+    : (kind === "threat" ? "notification-threat.svg" : "notification-logo.svg");
+  return browser.runtime.getURL(filename);
+}
 
 function pumpNativeQueue() {
   if (nativeCurrent || nativeQueue.length === 0) return;
@@ -134,7 +146,7 @@ if (browser.webRequest?.onBeforeRequest) {
         type: "basic",
         title: message("uploadThreatWarning"),
         message: message("uploadThreatMessage", [detected]),
-        iconUrl: browser.runtime.getURL("notification-logo.svg")
+        iconUrl: notificationIcon("threat")
       });
       return { cancel: true };
     }
@@ -143,7 +155,7 @@ if (browser.webRequest?.onBeforeRequest) {
       type: "basic",
       title: message("uploadScanIncomplete"),
       message: message("uploadScanIncompleteMessage", [names]),
-      iconUrl: browser.runtime.getURL("notification-logo.svg")
+      iconUrl: notificationIcon("default")
     });
     return {};
   }, { urls: ["<all_urls>"], types: ["xmlhttprequest", "main_frame", "sub_frame"] }, ["blocking", "requestBody"]);
@@ -168,6 +180,7 @@ async function scanDownload(downloadId) {
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }
+    if (!result.infected && !cleanNotifications) return;
     const notification = {
       type: "basic",
       title: result.infected
@@ -177,7 +190,8 @@ async function scanDownload(downloadId) {
         ? (result.quarantined
           ? message("downloadQuarantinedMessage", filename(download))
           : message("downloadThreatMessage", filename(download)))
-        : message("downloadCleanMessage", filename(download))
+        : message("downloadCleanMessage", filename(download)),
+      iconUrl: notificationIcon(result.infected ? "threat" : "success")
     };
     let notificationId = `clamav-download-${downloadId}`;
     if (result.infected && result.quarantined) {
@@ -189,7 +203,7 @@ async function scanDownload(downloadId) {
       type: "basic",
       title: message("downloadScanFailed"),
       message: message("downloadScanFailedMessage", filename(download)),
-      iconUrl: browser.runtime.getURL("notification-logo.svg")
+      iconUrl: notificationIcon("default")
     });
   }
 }

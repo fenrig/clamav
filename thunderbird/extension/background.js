@@ -7,9 +7,20 @@ let nativeCurrent = null;
 const nativeQueue = [];
 let notificationSequence = 0;
 
+function notificationIcon(kind = "default") {
+  const filename = kind === "success"
+    ? "notification-success.svg"
+    : (kind === "threat" ? "notification-threat.svg" : "notification-logo.svg");
+  return messenger.runtime.getURL(filename);
+}
+
 function createNotification(options, notificationId = null) {
   const id = notificationId || `clamav-${Date.now()}-${++notificationSequence}`;
-  return messenger.notifications.create(id, options);
+  const notification = { ...options };
+  const kind = notification.notificationKind || "default";
+  delete notification.notificationKind;
+  if (!notification.iconUrl) notification.iconUrl = notificationIcon(kind);
+  return messenger.notifications.create(id, notification);
 }
 
 function pumpNativeQueue() {
@@ -190,12 +201,13 @@ async function cleanupTemporaryDownloads() {
 cleanupTemporaryDownloads();
 
 async function settings() {
-  const stored = await messenger.storage.local.get(["accounts", "cache", "scanDownloads", "scanOutgoing"]);
+  const stored = await messenger.storage.local.get(["accounts", "cache", "scanDownloads", "scanOutgoing", "cleanNotifications"]);
   return {
     accounts: stored.accounts || {},
     cache: { ...DEFAULT_CACHE, ...(stored.cache || {}) },
     scanDownloads: stored.scanDownloads !== false,
-    scanOutgoing: stored.scanOutgoing !== false
+    scanOutgoing: stored.scanOutgoing !== false,
+    cleanNotifications: stored.cleanNotifications === true
   };
 }
 
@@ -370,7 +382,7 @@ if (messenger.compose?.onBeforeSend) {
       type: "basic",
       title: message("outgoingWarning"),
       message: parts.join("\n\n"),
-      iconUrl: messenger.runtime.getURL("notification-logo.svg")
+      iconUrl: notificationIcon(detectedNames ? "threat" : "default")
     });
     return { cancel: true };
   });
@@ -388,6 +400,7 @@ messenger.downloads.onChanged.addListener((delta) => {
 
 async function showResult(result, automatic, attachmentName, quiet = false) {
   if ((automatic || quiet) && !result.infected) return;
+  if (!result.infected && !(await settings()).cleanNotifications) return;
   const name = (attachmentName || "attachment").split(/[\\/]/).pop();
   const phishing = isPhishingResult(result);
   const notification = {
@@ -402,7 +415,7 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
         ? "quarantineNotificationMessage"
         : (phishing ? "phishingNotificationMessage" : "threatNotificationMessage"), name)
       : message("scanCleanMessage", name),
-    iconUrl: messenger.runtime.getURL("notification-logo.svg")
+    notificationKind: result.infected ? "threat" : "success"
   };
   if (result.infected && result.quarantined) {
     const notificationId = `clamav-quarantine-${Date.now()}-${++notificationSequence}`;
@@ -744,17 +757,20 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
     try {
       const messageId = await displayedMessageId(sender);
       const scanned = await rescanMessageAttachments(messageId, true);
+      const cleanNotifications = (await settings()).cleanNotifications;
       if (!scanned) {
-        await createNotification({
+        if (cleanNotifications) await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
-          message: "This message has no attachments to scan."
+          message: "This message has no attachments to scan.",
+          notificationKind: "success"
         });
       } else if (!(detections.get(messageId) || []).length) {
-        await createNotification({
+        if (cleanNotifications) await createNotification({
           type: "basic",
           title: "ClamAV scan complete",
-          message: "No viruses or malicious links were found."
+          message: "No viruses or malicious links were found.",
+          notificationKind: "success"
         });
       }
       return { ok: true };
@@ -900,13 +916,16 @@ async function scanFullLibrary() {
       }
     }
     if (scanState.cancelled) throw new Error("Library scan cancelled");
-    await createNotification({
-      type: "basic",
-      title: "ClamAV library scan complete",
-      message: detectionsFound
-        ? `Scanned ${messagesScanned} messages and ${partsScanned} attachments or message text parts. Detections found in ${detectionsFound} messages.`
-        : `Scanned ${messagesScanned} messages and ${partsScanned} attachments or message text parts. No viruses or malicious links were found.`
-    });
+    if (detectionsFound || (await settings()).cleanNotifications) {
+      await createNotification({
+        type: "basic",
+        title: "ClamAV library scan complete",
+        message: detectionsFound
+          ? `Scanned ${messagesScanned} messages and ${partsScanned} attachments or message text parts. Detections found in ${detectionsFound} messages.`
+          : `Scanned ${messagesScanned} messages and ${partsScanned} attachments or message text parts. No viruses or malicious links were found.`,
+        notificationKind: detectionsFound ? "threat" : "success"
+      });
+    }
   } catch (error) {
         await createNotification({
       type: "basic",

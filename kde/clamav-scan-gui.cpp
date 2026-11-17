@@ -624,7 +624,19 @@ public:
             detailsPanel_->setVisible(!visible);
             detailsToggleButton_->setText(visible ? tr("Show details") : tr("Hide details"));
         });
-        startScanProcess();
+        if (paths_.isEmpty()) {
+            waitingForTargets_ = true;
+            pulseTimer_.stop();
+            metricsTimer_.stop();
+            statsTimer_.stop();
+            fileDisplayTimer_.stop();
+            tabs_->setCurrentWidget(targetsPanel_);
+            action_->setText(tr("Close"));
+            setTargetEditingEnabled(true);
+            updateStatusCard();
+        } else {
+            startScanProcess();
+        }
     }
 
 private:
@@ -636,7 +648,7 @@ private:
                                 static_cast<QWidget *>(clearPathsButton_)})
             if (widget)
                 widget->setEnabled(enabled);
-        rescanButton_->setEnabled(enabled && finished_ && !paths_.isEmpty());
+        rescanButton_->setEnabled(enabled && (finished_ || waitingForTargets_) && !paths_.isEmpty());
     }
 
     void startScanProcess()
@@ -644,6 +656,7 @@ private:
         if (paths_.isEmpty() || process_->state() != QProcess::NotRunning)
             return;
         finished_ = false;
+        waitingForTargets_ = false;
         cancelled_ = false;
         infectionDetected_ = false;
         detectedFiles_.clear();
@@ -688,7 +701,11 @@ private:
         QColor color = green;
         QString title = tr("Scan complete");
         QString details = tr("No threats were found.");
-        if (running && infectionDetected_) {
+        if (waitingForTargets_) {
+            color = blue;
+            title = tr("Choose scan locations");
+            details = tr("Add at least one file or folder, then start the scan.");
+        } else if (running && infectionDetected_) {
             color = red;
             title = tr("Threat detected");
             details = pending > 0
@@ -1149,6 +1166,10 @@ private:
     {
         if (!confirmCloseWithUnhandledInfections())
             return;
+        if (waitingForTargets_) {
+            accept();
+            return;
+        }
         if (finished_) {
             accept();
             return;
@@ -1170,6 +1191,7 @@ private:
         fileDisplayTimer_.stop();
         updateMetrics();
         finished_ = true;
+        waitingForTargets_ = false;
         pulseTimer_.stop();
         resultCode_ = cancelled_ ? 130 : (exitCode == 0 ? 0 : exitCode == 1 ? 1 : (exitCode == 0 ? 1 : exitCode));
         progress_->setRange(0, 100);
@@ -1196,7 +1218,7 @@ private:
         action_->setText(tr("Close"));
         rescanButton_->setText(tr("Rescan"));
         setTargetEditingEnabled(true);
-        if (exitCode == 1 && infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
+        if (infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
             tabs_->setCurrentWidget(detectionsPanel_);
         const bool canQuarantine = exitCode == 1 && infectionDetected_
             && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
@@ -1420,6 +1442,7 @@ private:
     QString scanner_;
     QStringList paths_;
     bool quarantine_ = false;
+    bool waitingForTargets_ = false;
     QString socketPath_;
     QString cpuTarget_ = tr("Scanner");
     QString statusText_;
@@ -1504,7 +1527,7 @@ int main(int argc, char **argv)
     parser.addPositionalArgument(QStringLiteral("path"), QStringLiteral("Files or directories to scan"));
     parser.process(app);
     const QStringList paths = parser.positionalArguments();
-    if ((!parser.isSet(scannerOption) && !parser.isSet(quarantineOption)) || paths.isEmpty())
+    if (!parser.isSet(scannerOption) && !parser.isSet(quarantineOption))
         return 2;
     QString scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
     if (scanner.isEmpty())

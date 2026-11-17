@@ -228,6 +228,8 @@ public:
         emptyState->setTextFormat(Qt::RichText);
         emptyState->setTextInteractionFlags(Qt::TextBrowserInteraction);
         emptyState->setOpenExternalLinks(true);
+        emptyState->setWordWrap(true);
+        emptyState->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         emptyState->setText(tr("<h2>Nothing selected</h2>"
                                "<p>Select a quarantined item to view its detection details, source, and ClamAV report.</p>"
                                "<p><b>Restore</b> only when you trust the file and understand the detection. "

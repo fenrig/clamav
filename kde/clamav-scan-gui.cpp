@@ -1000,12 +1000,14 @@ private:
         statusCardDetails_->setText(details);
         const QString normalHeading = quarantine_ ? tr("Scanning and protecting with ClamAV")
                                                   : tr("Scanning with ClamAV");
-        heading_->setText(allHandled && !running
-            ? QStringLiteral("✓ ") + normalHeading
-            : normalHeading);
-        heading_->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600; color: %1;")
-                                .arg(allHandled && !running ? QStringLiteral("#50aa64")
-                                                             : QStringLiteral("palette(window-text)")));
+        heading_->setText(normalHeading);
+        heading_->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600; color: palette(window-text);"));
+        if (running && pending == 0)
+            setSearchIcon();
+        else if (pending > 0 || (!running && infectionDetected_ && !allHandled))
+            setStatusIcon(QColor(QStringLiteral("#da4453")), QChar('!'));
+        else
+            setStatusIcon(QColor(QStringLiteral("#50aa64")), QChar(0x2713));
     }
 
     static QColor activityColor(const QString &detection)
@@ -1111,6 +1113,22 @@ private:
             }
         }
         statusIcon_->setPixmap(pixmap);
+    }
+
+    void setSearchIcon()
+    {
+        QIcon icon;
+        for (const QString &name : {QStringLiteral("edit-find"), QStringLiteral("system-search"),
+                                    QStringLiteral("search")}) {
+            icon = QIcon::fromTheme(name);
+            if (!icon.isNull())
+                break;
+        }
+        if (!icon.isNull()) {
+            statusIcon_->setPixmap(icon.pixmap(QSize(36, 36)));
+            return;
+        }
+        setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar('?'));
     }
 
     qint64 processCpuTime() const

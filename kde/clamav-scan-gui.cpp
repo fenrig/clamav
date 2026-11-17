@@ -739,6 +739,8 @@ public:
         });
         connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
             setLogMonitoring(tabs_->currentWidget() == logPage);
+            if (tabs_->currentWidget() == scanPage_)
+                refreshActivityList();
         });
         connect(detectionsList_, &QListWidget::currentRowChanged, this,
                 [this](int) { updateSelectedDetection(); });
@@ -775,6 +777,23 @@ public:
     }
 
 private:
+    void refreshActivityList()
+    {
+        if (!activityList_)
+            return;
+        activityList_->setUpdatesEnabled(false);
+        activityList_->clear();
+        for (int index = 0; index < activityEntries_.size(); ++index) {
+            activityList_->addItem(QString());
+            updateActivityItem(index);
+        }
+        activityList_->setUpdatesEnabled(true);
+        activityList_->viewport()->update();
+        updateActivitySummary();
+        if (currentActivityIndex_ >= 0 && currentActivityIndex_ < activityList_->count())
+            activityList_->scrollToItem(activityList_->item(currentActivityIndex_));
+    }
+
     void setLogMonitoring(bool enabled)
     {
         if (!enabled) {
@@ -1155,6 +1174,7 @@ private:
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
             bool detectionsChanged = false;
+            const bool activityVisible = tabs_ && tabs_->currentWidget() == scanPage_;
             const QString incoming = QString::fromLocal8Bit(text);
             for (const QString &sourceLine : incoming.split(QLatin1Char('\n'))) {
                 const QString line = sourceLine.trimmed();
@@ -1162,9 +1182,11 @@ private:
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
                     activityEntries_.append({currentFile_, {}});
                     currentActivityIndex_ = activityEntries_.size() - 1;
-                    activityList_->addItem(QString());
-                    updateActivityItem(currentActivityIndex_);
-                    updateActivitySummary();
+                    if (activityVisible) {
+                        activityList_->addItem(QString());
+                        updateActivityItem(currentActivityIndex_);
+                        updateActivitySummary();
+                    }
                 } else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
                     const QJsonDocument document = QJsonDocument::fromJson(
                         line.mid(QStringLiteral("SCAN_RESULT: ").size()).toUtf8());
@@ -1182,13 +1204,17 @@ private:
                         if (activityDetection.isEmpty())
                             activityDetection = canonicalDetection(activityMessage.section(QLatin1Char('\n'), 0, 0));
                     }
-                    if (currentActivityIndex_ >= 0) {
+                    if (activityVisible && currentActivityIndex_ >= 0) {
                         if (activityEntries_[currentActivityIndex_].detection.isEmpty()
                                 && !activityDetection.isEmpty())
                             ++activityDetectionCount_;
                         activityEntries_[currentActivityIndex_].detection = activityDetection;
                         updateActivityItem(currentActivityIndex_);
                         updateActivitySummary();
+                    } else if (currentActivityIndex_ >= 0
+                               && activityEntries_[currentActivityIndex_].detection.isEmpty()
+                               && !activityDetection.isEmpty()) {
+                        ++activityDetectionCount_;
                     }
                     scanHashes_.insert(currentFile_, result.value(QStringLiteral("sha256")).toString());
                     if (infected) {

@@ -1483,6 +1483,21 @@ private:
             warning.exec();
             if (warning.clickedButton() != stopButton)
                 return;
+            cancelled_ = true;
+            writeAudit(QStringLiteral("scan-stop"), QString(),
+                       QStringLiteral("paused=%1").arg(paused_ ? 1 : 0));
+            if (paused_) {
+                ::kill(static_cast<pid_t>(process_->processId()), SIGCONT);
+                paused_ = false;
+            }
+            pauseButton_->setEnabled(false);
+            action_->setEnabled(false);
+            process_->terminate();
+            QTimer::singleShot(1500, this, [this] {
+                if (process_->state() != QProcess::NotRunning)
+                    process_->kill();
+            });
+            return;
         }
         if (!confirmCloseWithUnhandledInfections())
             return;
@@ -1495,20 +1510,6 @@ private:
             accept();
             return;
         }
-        cancelled_ = true;
-        writeAudit(QStringLiteral("scan-stop"), QString(),
-                   QStringLiteral("paused=%1").arg(paused_ ? 1 : 0));
-        if (paused_) {
-            ::kill(static_cast<pid_t>(process_->processId()), SIGCONT);
-            paused_ = false;
-        }
-        pauseButton_->setEnabled(false);
-        action_->setEnabled(false);
-        process_->terminate();
-        QTimer::singleShot(1500, this, [this] {
-            if (process_->state() != QProcess::NotRunning)
-                process_->kill();
-        });
     }
 
     void pauseOrResumeScan()

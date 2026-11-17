@@ -366,10 +366,18 @@ public:
         statusText->addWidget(statusCardTitle_);
         statusText->addWidget(statusCardDetails_);
         statusLayout->addLayout(statusText, 1);
+        stopStatusButton_ = new QPushButton(tr("Stop scan"), statusCard_);
+        stopStatusButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-stop"),
+                                                     QIcon::fromTheme(QStringLiteral("process-stop"))));
+        stopStatusButton_->setVisible(false);
+        statusLayout->addSpacing(8);
+        statusLayout->addWidget(stopStatusButton_);
         openQuarantineButton_ = new QPushButton(tr("Open quarantine"), statusCard_);
         openQuarantineButton_->setIcon(QIcon::fromTheme(QStringLiteral("clamav-quarantine"),
                                                          QIcon::fromTheme(QStringLiteral("folder-open"))));
+        statusLayout->addSpacing(4);
         statusLayout->addWidget(openQuarantineButton_);
+        connect(stopStatusButton_, &QPushButton::clicked, this, [this] { cancelOrClose(); });
         connect(openQuarantineButton_, &QPushButton::clicked, this, [this] {
             if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
                 QMessageBox::warning(this, tr("ClamAV"), tr("The quarantine manager could not be opened."));
@@ -1014,6 +1022,8 @@ private:
             .arg(background).arg(color.red()).arg(color.green()).arg(color.blue()));
         statusCardTitle_->setText(title);
         statusCardDetails_->setText(details);
+        stopStatusButton_->setVisible(running && !waitingForTargets_);
+        stopStatusButton_->setEnabled(running && !waitingForTargets_);
         const QString normalHeading = quarantine_ ? tr("Scanning and protecting with ClamAV")
                                                   : tr("Scanning with ClamAV");
         heading_->setText(normalHeading);
@@ -1565,6 +1575,7 @@ private:
             }
             pauseButton_->setEnabled(false);
             action_->setEnabled(false);
+            stopStatusButton_->setEnabled(false);
             process_->terminate();
             QTimer::singleShot(1500, this, [this] {
                 if (process_->state() != QProcess::NotRunning)
@@ -1655,6 +1666,8 @@ private:
         action_->setEnabled(true);
         action_->setText(tr("Close"));
         pauseButton_->setEnabled(false);
+        stopStatusButton_->setVisible(false);
+        stopStatusButton_->setEnabled(false);
         rescanButton_->setText(tr("Rescan"));
         setTargetEditingEnabled(true);
         if (infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
@@ -1943,6 +1956,7 @@ private:
     QFrame *statusCard_ = nullptr;
     QLabel *statusCardTitle_ = nullptr;
     QLabel *statusCardDetails_ = nullptr;
+    QPushButton *stopStatusButton_ = nullptr;
     QPushButton *openQuarantineButton_ = nullptr;
     QPushButton *quarantineButton_ = nullptr;
     QCheckBox *quarantineCheckBox_ = nullptr;

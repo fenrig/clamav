@@ -251,12 +251,10 @@ public:
         tabs_->setTabPosition(QTabWidget::West);
         auto *scanPage = new QWidget(tabs_);
         auto *scanLayout = new QVBoxLayout(scanPage);
-        tabs_->addTab(scanPage, tr("Scan"));
-        layout->addWidget(tabs_, 1);
 
         summary_ = new QLabel(tr("Preparing scan…"), this);
         summary_->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
-        scanLayout->addWidget(summary_);
+        layout->addWidget(summary_);
         statusCard_ = new QFrame(this);
         statusCard_->setObjectName(QStringLiteral("scanStatusCard"));
         auto *statusLayout = new QHBoxLayout(statusCard_);
@@ -278,7 +276,7 @@ public:
             if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
                 QMessageBox::warning(this, tr("ClamAV"), tr("The quarantine manager could not be opened."));
         });
-        scanLayout->addWidget(statusCard_);
+        layout->addWidget(statusCard_);
         pulseTimer_.setInterval(700);
         connect(&pulseTimer_, &QTimer::timeout, this, [this] {
             pulseOn_ = !pulseOn_;
@@ -290,7 +288,10 @@ public:
         targetSummary_->setText(targetDescription());
         targetSummary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
         targetSummary_->setWordWrap(true);
-        scanLayout->addWidget(targetSummary_);
+        layout->addWidget(targetSummary_);
+
+        tabs_->addTab(scanPage, tr("Scan"));
+        layout->addWidget(tabs_, 1);
 
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Measuring…"));
@@ -372,7 +373,7 @@ public:
         panelLayout->addLayout(panelHeader);
         auto *splitter = new QSplitter(Qt::Horizontal, detectionsPanel_);
         detectionsList_ = new QListWidget(splitter);
-        detectionsList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        detectionsList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         detectionsList_->setFrameShape(QFrame::NoFrame);
         splitter->addWidget(detectionsList_);
 
@@ -417,6 +418,8 @@ public:
         tabs_->addTab(detectionsPanel_, tr("Results (0)"));
         connect(detectionsList_, &QListWidget::currentRowChanged, this,
                 [this](int) { updateSelectedDetection(); });
+        connect(detectionsList_, &QListWidget::itemSelectionChanged, this,
+                [this] { updateSelectedDetection(); });
         connect(lookupButton_, &QPushButton::clicked, this, [this] { lookupSelectedDetection(false); });
         connect(virusTotalButton_, &QPushButton::clicked, this, [this] { lookupSelectedDetection(true); });
         connect(detailQuarantineButton_, &QPushButton::clicked, this,
@@ -683,57 +686,65 @@ private:
             return;
         QString selectedPath;
         QString selectedDetection;
-        if (const int row = detectionsList_->currentRow(); row >= 0 && row < detectedFiles_.size()) {
-            selectedPath = detectedFiles_.at(row).path;
-            selectedDetection = detectedFiles_.at(row).detection;
+        if (detectionsList_->currentItem()) {
+            const int sourceIndex = detectionsList_->currentItem()->data(Qt::UserRole).toInt();
+            if (sourceIndex >= 0 && sourceIndex < detectedFiles_.size()) {
+                selectedPath = detectedFiles_.at(sourceIndex).path;
+                selectedDetection = detectedFiles_.at(sourceIndex).detection;
+            }
         }
         detectionsList_->clear();
-        for (const auto &detected : detectedFiles_) {
+        QList<int> order;
+        for (int index = 0; index < detectedFiles_.size(); ++index)
+            order.append(index);
+        std::stable_sort(order.begin(), order.end(), [this](int left, int right) {
+            const DetectionEntry &a = detectedFiles_.at(left);
+            const DetectionEntry &b = detectedFiles_.at(right);
+            if (a.handled != b.handled)
+                return !a.handled;
+            return detectionLevel(a.detection) > detectionLevel(b.detection);
+        });
+        for (const int sourceIndex : order) {
+            const auto &detected = detectedFiles_.at(sourceIndex);
             const int level = detectionLevel(detected.detection);
             const QColor color = detectionLevelColor(level);
             auto *item = new QListWidgetItem(detectionsList_);
             auto *row = new QFrame(detectionsList_);
+            row->setStyleSheet(QStringLiteral(
+                "QFrame { background: rgba(%1, %2, %3, 35); border: 1px solid rgba(%1, %2, %3, 120);"
+                " border-left: 5px solid rgb(%1, %2, %3); border-radius: 5px; }")
+                .arg(color.red()).arg(color.green()).arg(color.blue()));
             auto *rowLayout = new QVBoxLayout(row);
             rowLayout->setContentsMargins(10, 8, 10, 8);
-            auto *top = new QHBoxLayout;
+            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓ ") : QStringLiteral("○ "), row);
+            handledState->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: %1;")
+                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
+                                                              : QStringLiteral("palette(mid)")));
+            rowLayout->addWidget(handledState);
             auto *file = new QLabel(QDir::toNativeSeparators(detected.path), row);
             file->setToolTip(detected.path);
             file->setStyleSheet(QStringLiteral("font-weight: 600;"));
-            top->addWidget(file, 1);
+            rowLayout->addWidget(file);
             auto *levelLabel = new QLabel(detectionLevelLabel(level), row);
             levelLabel->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
                                        .arg(color.red()).arg(color.green()).arg(color.blue()));
-            top->addWidget(levelLabel);
-            if (detected.handled) {
-                auto *handled = new QLabel(tr("✓ Handled"), row);
-                handled->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
-                top->addWidget(handled);
-            }
-            if (detected.deleted) {
-                auto *deleted = new QLabel(tr("✓ Deleted"), row);
-                deleted->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
-                top->addWidget(deleted);
-            }
-            rowLayout->addLayout(top);
+            rowLayout->addWidget(levelLabel);
             auto *detection = new QLabel(detected.detection, row);
             detection->setWordWrap(true);
             rowLayout->addWidget(detection);
-            auto *meter = new QProgressBar(row);
-            meter->setRange(0, 4);
-            meter->setValue(level);
-            meter->setTextVisible(false);
-            meter->setFixedHeight(8);
-            meter->setStyleSheet(QStringLiteral(
-                "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
-                "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
-                .arg(color.red()).arg(color.green()).arg(color.blue()));
-            rowLayout->addWidget(meter);
+            if (detected.deleted) {
+                auto *deleted = new QLabel(tr("✓ Deleted"), row);
+                deleted->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
+                rowLayout->addWidget(deleted);
+            }
+            item->setData(Qt::UserRole, sourceIndex);
             item->setSizeHint(row->sizeHint());
             detectionsList_->setItemWidget(item, row);
         }
-        for (int row = 0; row < detectedFiles_.size(); ++row) {
-            if (detectedFiles_.at(row).path == selectedPath
-                    && detectedFiles_.at(row).detection == selectedDetection) {
+        for (int row = 0; row < detectionsList_->count(); ++row) {
+            const int sourceIndex = detectionsList_->item(row)->data(Qt::UserRole).toInt();
+            if (detectedFiles_.at(sourceIndex).path == selectedPath
+                    && detectedFiles_.at(sourceIndex).detection == selectedDetection) {
                 detectionsList_->setCurrentRow(row);
                 break;
             }
@@ -748,8 +759,12 @@ private:
 
     DetectionEntry *selectedDetectionEntry()
     {
-        const int row = detectionsList_ ? detectionsList_->currentRow() : -1;
-        return row >= 0 && row < detectedFiles_.size() ? &detectedFiles_[row] : nullptr;
+        if (!detectionsList_ || !detectionsList_->currentItem()
+                || !detectionsList_->currentItem()->isSelected())
+            return nullptr;
+        const int sourceIndex = detectionsList_->currentItem()->data(Qt::UserRole).toInt();
+        return sourceIndex >= 0 && sourceIndex < detectedFiles_.size()
+            ? &detectedFiles_[sourceIndex] : nullptr;
     }
 
     void updateSelectedDetection()

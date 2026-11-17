@@ -377,7 +377,12 @@ public:
                                                          QIcon::fromTheme(QStringLiteral("folder-open"))));
         statusLayout->addSpacing(4);
         statusLayout->addWidget(openQuarantineButton_);
-        connect(stopStatusButton_, &QPushButton::clicked, this, [this] { cancelOrClose(); });
+        connect(stopStatusButton_, &QPushButton::clicked, this, [this] {
+            if (paused_)
+                pauseOrResumeScan();
+            else
+                cancelOrClose();
+        });
         connect(openQuarantineButton_, &QPushButton::clicked, this, [this] {
             if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
                 QMessageBox::warning(this, tr("ClamAV"), tr("The quarantine manager could not be opened."));
@@ -1024,6 +1029,11 @@ private:
         statusCardDetails_->setText(details);
         stopStatusButton_->setVisible(running && !waitingForTargets_);
         stopStatusButton_->setEnabled(running && !waitingForTargets_);
+        stopStatusButton_->setText(paused_ ? tr("Continue scan") : tr("Stop scan"));
+        stopStatusButton_->setIcon(paused_
+            ? QIcon::fromTheme(QStringLiteral("media-playback-start"))
+            : QIcon::fromTheme(QStringLiteral("media-playback-stop"),
+                               QIcon::fromTheme(QStringLiteral("process-stop"))));
         const QString normalHeading = quarantine_ ? tr("Scanning and protecting with ClamAV")
                                                   : tr("Scanning with ClamAV");
         heading_->setText(normalHeading);

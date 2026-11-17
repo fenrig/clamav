@@ -681,10 +681,9 @@ public:
         auto *logTitle = new QLabel(tr("Scan log"), logPage);
         logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
         logLayout->addWidget(logTitle);
-        logView_ = new QTextEdit(logPage);
-        logView_->setReadOnly(true);
-        logView_->setLineWrapMode(QTextEdit::WidgetWidth);
-        logView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        logView_ = new QListWidget(logPage);
+        logView_->setFrameShape(QFrame::NoFrame);
+        logView_->setSelectionMode(QAbstractItemView::NoSelection);
         logLayout->addWidget(logView_, 1);
         tabs_->addTab(logPage, tr("Log"));
         logPath_ = auditLogPath(QStringLiteral("scan.log"));
@@ -760,8 +759,45 @@ private:
 
     void refreshLog()
     {
-        if (logView_)
-            logView_->setPlainText(prettyAuditLog(logPath_));
+        if (!logView_)
+            return;
+        logView_->clear();
+        const QString text = prettyAuditLog(logPath_);
+        if (text.startsWith(tr("No log"))) {
+            auto *item = new QListWidgetItem(logView_);
+            auto *empty = new QLabel(text, logView_);
+            empty->setAlignment(Qt::AlignCenter);
+            empty->setStyleSheet(QStringLiteral("color: palette(mid); padding: 32px;"));
+            item->setSizeHint(QSize(0, 90));
+            logView_->setItemWidget(item, empty);
+            return;
+        }
+        for (const QString &block : text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
+            const QStringList lines = block.split(QLatin1Char('\n'));
+            if (lines.isEmpty())
+                continue;
+            const bool failed = lines.first().contains(QStringLiteral(" · failed"));
+            auto *item = new QListWidgetItem(logView_);
+            auto *card = new QFrame(logView_);
+            card->setStyleSheet(QStringLiteral(
+                "QFrame { background: palette(alternate-base); border: 1px solid %1; border-left: 5px solid %1; border-radius: 8px; }"
+                "QLabel { border: none; background: transparent; }")
+                .arg(failed ? QStringLiteral("#da4453") : QStringLiteral("#3daee9")));
+            auto *layout = new QVBoxLayout(card);
+            layout->setContentsMargins(12, 9, 12, 9);
+            auto *header = new QLabel(lines.first(), card);
+            header->setStyleSheet(QStringLiteral("font-weight: 700; font-size: 14px;"));
+            layout->addWidget(header);
+            if (lines.size() > 1) {
+                auto *body = new QLabel(lines.mid(1).join(QLatin1Char('\n')), card);
+                body->setWordWrap(true);
+                body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                body->setStyleSheet(QStringLiteral("font-family: monospace; color: palette(window-text);"));
+                layout->addWidget(body);
+            }
+            item->setSizeHint(QSize(0, 20 + card->sizeHint().height()));
+            logView_->setItemWidget(item, card);
+        }
     }
 
     void writeAudit(const QString &action, const QString &source, const QString &detail,
@@ -794,6 +830,7 @@ private:
         waitingForTargets_ = false;
         cancelled_ = false;
         paused_ = false;
+        closeLogged_ = false;
         cpuSample_ = -1;
         ioSample_ = {-1, -1};
         sampleTime_ = 0.0;
@@ -1430,10 +1467,13 @@ private:
             return;
         }
         if (finished_) {
+            logHandledClose();
             accept();
             return;
         }
         cancelled_ = true;
+        writeAudit(QStringLiteral("scan-stop"), QString(),
+                   QStringLiteral("paused=%1").arg(paused_ ? 1 : 0));
         if (paused_) {
             ::kill(static_cast<pid_t>(process_->processId()), SIGCONT);
             paused_ = false;
@@ -1458,6 +1498,7 @@ private:
             if (::kill(pid, SIGCONT) != 0)
                 return;
             paused_ = false;
+            writeAudit(QStringLiteral("scan-continue"), QString(), QStringLiteral("scan resumed"));
             pauseButton_->setText(tr("Pause scan"));
             pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
             progress_->setFormat(tr("Scanning…"));
@@ -1467,6 +1508,7 @@ private:
             if (::kill(pid, SIGSTOP) != 0)
                 return;
             paused_ = true;
+            writeAudit(QStringLiteral("scan-pause"), QString(), QStringLiteral("scan paused"));
             pauseButton_->setText(tr("Continue scan"));
             pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
             progress_->setFormat(tr("Paused"));
@@ -1542,6 +1584,8 @@ private:
             event->ignore();
             return;
         }
+        if (finished_)
+            logHandledClose();
         if (!finished_ && process_->state() != QProcess::NotRunning)
             process_->kill();
         event->accept();
@@ -1576,6 +1620,21 @@ private:
                                 });
         }
         return warning.clickedButton() == closeAnyway;
+    }
+
+    void logHandledClose()
+    {
+        if (closeLogged_ || detectedFiles_.isEmpty())
+            return;
+        const bool allHandled = std::all_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                                            [](const DetectionEntry &entry) {
+                                                return entry.handled || entry.deleted;
+                                            });
+        if (!allHandled)
+            return;
+        writeAudit(QStringLiteral("scan-close"), QString(),
+                   QStringLiteral("all detections handled; count=%1").arg(detectedFiles_.size()));
+        closeLogged_ = true;
     }
 
     void quarantineDetectedFiles()
@@ -1630,10 +1689,17 @@ private:
             detection.constData(), sha256.constData()};
         char id[CLAMAV_QUARANTINE_ID_LENGTH];
         char payload[PATH_MAX];
-        if (!clamav_quarantine_store(source.constData(), &metadata, 1, id, payload))
+        const QString detail = QStringLiteral("severity=%1 (%2); detection=%3")
+            .arg(detectionLevel(detected.detection))
+            .arg(detectionLevelLabel(detectionLevel(detected.detection)))
+            .arg(detected.detection);
+        if (!clamav_quarantine_store(source.constData(), &metadata, 1, id, payload)) {
+            writeAudit(QStringLiteral("scan-quarantine"), detected.path, detail, false);
             return false;
+        }
         detected.handled = true;
         detected.quarantineId = QString::fromLatin1(id);
+        writeAudit(QStringLiteral("scan-quarantine"), detected.path, detail);
         return true;
     }
 
@@ -1809,7 +1875,7 @@ private:
     QPushButton *detailDeleteAllButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QListWidget *activityList_ = nullptr;
-    QTextEdit *logView_ = nullptr;
+    QListWidget *logView_ = nullptr;
     QFileSystemWatcher *logWatcher_ = nullptr;
     QTimer logRefreshTimer_;
     QString logPath_;
@@ -1823,6 +1889,7 @@ private:
     double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0, ioPeak_ = 0.0;
     qint64 ioTotalRead_ = 0, ioTotalWrite_ = 0;
     bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
+    bool closeLogged_ = false;
     int resultCode_ = 130;
 
 public:

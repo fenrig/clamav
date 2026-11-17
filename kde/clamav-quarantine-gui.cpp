@@ -499,10 +499,9 @@ public:
         auto *logTitle = new QLabel(tr("Quarantine log"), logPage);
         logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
         logLayout->addWidget(logTitle);
-        logView_ = new QTextEdit(logPage);
-        logView_->setReadOnly(true);
-        logView_->setLineWrapMode(QTextEdit::WidgetWidth);
-        logView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        logView_ = new QListWidget(logPage);
+        logView_->setFrameShape(QFrame::NoFrame);
+        logView_->setSelectionMode(QAbstractItemView::NoSelection);
         logLayout->addWidget(logView_, 1);
         tabs->addTab(logPage, tr("Log"));
         logPath_ = auditLogPath(QStringLiteral("quarantine.log"));
@@ -593,8 +592,45 @@ private:
 
     void refreshLog()
     {
-        if (logView_)
-            logView_->setPlainText(prettyAuditLog(logPath_));
+        if (!logView_)
+            return;
+        logView_->clear();
+        const QString text = prettyAuditLog(logPath_);
+        if (text.startsWith(tr("No log"))) {
+            auto *item = new QListWidgetItem(logView_);
+            auto *empty = new QLabel(text, logView_);
+            empty->setAlignment(Qt::AlignCenter);
+            empty->setStyleSheet(QStringLiteral("color: palette(mid); padding: 32px;"));
+            item->setSizeHint(QSize(0, 90));
+            logView_->setItemWidget(item, empty);
+            return;
+        }
+        for (const QString &block : text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
+            const QStringList lines = block.split(QLatin1Char('\n'));
+            if (lines.isEmpty())
+                continue;
+            const bool failed = lines.first().contains(QStringLiteral(" · failed"));
+            auto *item = new QListWidgetItem(logView_);
+            auto *card = new QFrame(logView_);
+            card->setStyleSheet(QStringLiteral(
+                "QFrame { background: palette(alternate-base); border: 1px solid %1; border-left: 5px solid %1; border-radius: 8px; }"
+                "QLabel { border: none; background: transparent; }")
+                .arg(failed ? QStringLiteral("#da4453") : QStringLiteral("#3daee9")));
+            auto *layout = new QVBoxLayout(card);
+            layout->setContentsMargins(12, 9, 12, 9);
+            auto *header = new QLabel(lines.first(), card);
+            header->setStyleSheet(QStringLiteral("font-weight: 700; font-size: 14px;"));
+            layout->addWidget(header);
+            if (lines.size() > 1) {
+                auto *body = new QLabel(lines.mid(1).join(QLatin1Char('\n')), card);
+                body->setWordWrap(true);
+                body->setTextInteractionFlags(Qt::TextSelectableByMouse);
+                body->setStyleSheet(QStringLiteral("font-family: monospace; color: palette(window-text);"));
+                layout->addWidget(body);
+            }
+            item->setSizeHint(QSize(0, 20 + card->sizeHint().height()));
+            logView_->setItemWidget(item, card);
+        }
     }
 
     void updateManualFileUi()
@@ -1094,7 +1130,7 @@ private:
     QPushButton *manualRemoveButton;
     QPushButton *manualQuarantineButton;
     QCheckBox *manualRemoveOriginals;
-    QTextEdit *logView_ = nullptr;
+    QListWidget *logView_ = nullptr;
     QFileSystemWatcher *logWatcher_ = nullptr;
     QTimer logRefreshTimer_;
     QString logPath_;

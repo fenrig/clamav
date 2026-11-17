@@ -18,6 +18,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLockFile>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMessageBox>
@@ -30,11 +31,15 @@
 #include <QTextEdit>
 #include <QTabWidget>
 #include <QUrl>
+#include <QStandardPaths>
 #include <QLocale>
 #include <QTranslator>
 #include <QTableWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <memory>
+#include <unistd.h>
 
 static QString localDescription(const QString &detection)
 {
@@ -286,8 +291,6 @@ public:
         splitter->setStretchFactor(1, 2);
         splitter->setSizes({600, 400});
 
-        auto *intro = new QLabel(tr("User quarantine · payloads are never opened by this application"), this);
-        intro->setStyleSheet(QStringLiteral("color: palette(mid);"));
         auto *statusLayout = new QHBoxLayout(statusHeader);
         statusLayout->setContentsMargins(16, 12, 16, 12);
         statusLayout->addWidget(statusHeaderQuarantineIcon);
@@ -399,7 +402,6 @@ public:
         updateManualFileUi();
         auto *window = new QWidget(this);
         auto *windowLayout = new QVBoxLayout(window);
-        windowLayout->addWidget(intro);
         windowLayout->addWidget(statusHeader);
         windowLayout->addWidget(pathLabel);
         windowLayout->addWidget(tabs, 1);
@@ -914,6 +916,20 @@ private:
 int main(int argc, char **argv)
 {
     QApplication application(argc, argv);
+    std::unique_ptr<QLockFile> instanceLock;
+    if (::geteuid() != 0) {
+        QString lockDirectory = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        if (lockDirectory.isEmpty())
+            lockDirectory = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+        const QString lockPath = QDir(lockDirectory).filePath(
+            QStringLiteral("clamav-quarantine-gui-%1.lock").arg(::getuid()));
+        instanceLock = std::make_unique<QLockFile>(lockPath);
+        if (!instanceLock->tryLock(0)) {
+            QMessageBox::warning(nullptr, QObject::tr("ClamAV Quarantine"),
+                                 QObject::tr("The quarantine window is already open for this user."));
+            return 1;
+        }
+    }
     QTranslator dutch;
     if (QLocale().language() == QLocale::Dutch
             && dutch.load(QStringLiteral("clamav-quarantine_nl"), QStringLiteral(CLAMAV_TRANSLATION_DIR)))

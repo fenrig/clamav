@@ -26,6 +26,7 @@
     <message><source>Filter</source><translation>Filter</translation></message>
     <message><source>User quarantine · payloads are never opened by this application</source><translation>Gebruikersquarantaine · bestanden worden nooit door deze toepassing geopend</translation></message>
     <message><source>ClamAV Quarantine</source><translation>ClamAV-quarantaine</translation></message>
+    <message><source>The quarantine window is already open for this user.</source><translation>Het quarantainescherm is al geopend voor deze gebruiker.</translation></message>
     <message><source>Location: %1</source><translation>Locatie: %1</translation></message>
     <message><source>Location unavailable</source><translation>Locatie niet beschikbaar</translation></message>
     <message><source>Quarantine</source><translation>Quarantaine</translation></message>

@@ -800,13 +800,20 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
     if (cached) {
       logScan("attachment result from cache", { messageId: attachment.messageId, attachment: attachment.name, infected: cached.infected });
       await publishDetection(attachment.messageId, cached, attachment);
-      await showResult(cached, automatic, attachment.name, quiet);
+      // Cached results may come from an explicit scan that quarantined the
+      // file. Automatic mail scans do not quarantine; they only tag and mark
+      // the message for review.
+      const notificationResult = automatic ? { ...cached, quarantined: false } : cached;
+      await showResult(notificationResult, automatic, attachment.name, quiet);
       return;
     }
     objectUrl = URL.createObjectURL(file);
     downloadId = await messenger.downloads.download({ url: objectUrl, filename: `clamav-scan/${safeFilename(attachment.name)}`, saveAs: false, conflictAction: "uniquify" });
     const download = await waitForDownload(downloadId);
-    const result = await scanWithNativeHost(download.filename, true,
+    // Mail attachments are inspected in place so Thunderbird can tag the
+    // message and show the warning in the mail view. Only files explicitly
+    // downloaded to disk are quarantined by this integration.
+    const result = await scanWithNativeHost(download.filename, false,
       await quarantineOrigin(attachment.messageId), await quarantineMetadata(attachment.messageId));
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");

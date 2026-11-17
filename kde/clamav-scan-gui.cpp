@@ -1018,8 +1018,8 @@ private:
                                                   : tr("Scanning with ClamAV");
         heading_->setText(normalHeading);
         heading_->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600; color: palette(window-text);"));
-        if (running && pending == 0)
-            setSearchIcon();
+        if (running)
+            setSearchIcon(pending > 0);
         else if (pending > 0 || (!running && infectionDetected_ && !allHandled))
             setStatusIcon(QColor(QStringLiteral("#da4453")), QChar('!'));
         else
@@ -1129,7 +1129,7 @@ private:
         statusIcon_->setPixmap(pixmap);
     }
 
-    void setSearchIcon()
+    void setSearchIcon(bool warning = false)
     {
         QIcon icon;
         for (const QString &name : {QStringLiteral("edit-find"), QStringLiteral("system-search"),
@@ -1138,11 +1138,27 @@ private:
             if (!icon.isNull())
                 break;
         }
+        QPixmap pixmap(36, 36);
+        pixmap.fill(Qt::transparent);
         if (!icon.isNull()) {
-            statusIcon_->setPixmap(icon.pixmap(QSize(36, 36)));
-            return;
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.drawPixmap(0, 0, icon.pixmap(QSize(32, 32)));
+        } else {
+            setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar('?'));
+            pixmap = statusIcon_->pixmap(Qt::ReturnByValue);
         }
-        setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar('?'));
+        if (warning) {
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing);
+            painter.setPen(QPen(Qt::white, 1));
+            painter.setBrush(QColor(QStringLiteral("#da3748")));
+            painter.drawEllipse(QRectF(22, 22, 14, 14));
+            painter.setPen(QPen(Qt::white, 2, Qt::SolidLine, Qt::RoundCap));
+            painter.drawLine(QPointF(29, 25), QPointF(29, 30));
+            painter.drawPoint(QPointF(29, 33));
+        }
+        statusIcon_->setPixmap(pixmap);
     }
 
     qint64 processCpuTime() const

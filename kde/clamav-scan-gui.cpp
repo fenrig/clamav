@@ -725,12 +725,29 @@ private:
                 .arg(color.red()).arg(color.green()).arg(color.blue()));
             auto *rowLayout = new QHBoxLayout(row);
             rowLayout->setContentsMargins(10, 8, 10, 8);
-            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓") : QStringLiteral("○"), row);
+            auto *handledState = new QLabel(row);
             handledState->setFixedWidth(26);
             handledState->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+            const QStringList iconNames = detected.deleted
+                ? QStringList{QStringLiteral("user-trash-full"), QStringLiteral("edit-delete")}
+                : detected.handled
+                ? QStringList{QStringLiteral("emblem-ok"), QStringLiteral("dialog-ok-apply")}
+                : QStringList{QStringLiteral("dialog-warning"), QStringLiteral("dialog-error")};
+            QIcon statusIcon;
+            for (const QString &iconName : iconNames) {
+                statusIcon = QIcon::fromTheme(iconName);
+                if (!statusIcon.isNull())
+                    break;
+            }
+            if (!statusIcon.isNull())
+                handledState->setPixmap(statusIcon.pixmap(QSize(24, 24)));
+            else
+                handledState->setText(detected.deleted ? QStringLiteral("×")
+                                                        : detected.handled ? QStringLiteral("✓") : QStringLiteral("!"));
             handledState->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 700; color: %1;")
-                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
-                                                              : QStringLiteral("palette(mid)")));
+                                        .arg(detected.deleted || detected.handled
+                                                 ? QStringLiteral("rgb(80, 170, 100)")
+                                                 : QStringLiteral("rgb(210, 55, 65)")));
             rowLayout->addWidget(handledState);
             auto *textColumn = new QWidget(row);
             auto *textLayout = new QVBoxLayout(textColumn);

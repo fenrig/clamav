@@ -37,6 +37,7 @@
 #include <QFileSystemWatcher>
 #include <QDesktopServices>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QListWidget>
 #include <QSplitter>
 #include <QTabWidget>
@@ -537,8 +538,16 @@ public:
         updateQueue();
         fileDisplayTimer_.setInterval(150);
         connect(&fileDisplayTimer_, &QTimer::timeout, this, [this] {
-            if (!currentFile_.isEmpty())
-                currentFileLabel_->setText(tr("Current file: %1").arg(QDir::toNativeSeparators(currentFile_)));
+            if (!currentFile_.isEmpty()) {
+                const QString text = tr("Current file: %1").arg(QDir::toNativeSeparators(currentFile_));
+                if (currentFileLabel_->text() != text)
+                    currentFileLabel_->setText(text);
+                if (activityList_ && activityList_->isVisible()) {
+                    QScrollBar *scrollBar = activityList_->verticalScrollBar();
+                    if (scrollBar->value() >= scrollBar->maximum() - 2)
+                        activityList_->scrollToBottom();
+                }
+            }
         });
         fileDisplayTimer_.start();
 
@@ -901,6 +910,7 @@ private:
         scanHashes_.clear();
         activityList_->clear();
         activityEntries_.clear();
+        activityDetectionCount_ = 0;
         currentActivityIndex_ = -1;
         updateActivitySummary();
         refreshDetectionsPanel();
@@ -1025,13 +1035,11 @@ private:
     {
         if (!activitySummary_)
             return;
-        const int detections = std::count_if(activityEntries_.cbegin(), activityEntries_.cend(),
-            [](const ActivityEntry &entry) { return !entry.detection.isEmpty(); });
-        activitySummary_->setText(detections == 0
+        activitySummary_->setText(activityDetectionCount_ == 0
             ? tr("%1 file(s) scanned · no detections found.").arg(activityEntries_.size())
-            : tr("%1 file(s) scanned · %2 detection(s) found.").arg(activityEntries_.size()).arg(detections));
+            : tr("%1 file(s) scanned · %2 detection(s) found.").arg(activityEntries_.size()).arg(activityDetectionCount_));
         activitySummary_->setStyleSheet(QStringLiteral("font-weight: 600; color: %1;")
-            .arg(detections == 0 ? QStringLiteral("palette(mid)") : QStringLiteral("rgb(210, 55, 65)")));
+            .arg(activityDetectionCount_ == 0 ? QStringLiteral("palette(mid)") : QStringLiteral("rgb(210, 55, 65)")));
     }
 
     QString targetDescription() const
@@ -1157,7 +1165,6 @@ private:
                     activityList_->addItem(QString());
                     updateActivityItem(currentActivityIndex_);
                     updateActivitySummary();
-                    activityList_->scrollToBottom();
                 } else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
                     const QJsonDocument document = QJsonDocument::fromJson(
                         line.mid(QStringLiteral("SCAN_RESULT: ").size()).toUtf8());
@@ -1176,10 +1183,12 @@ private:
                             activityDetection = canonicalDetection(activityMessage.section(QLatin1Char('\n'), 0, 0));
                     }
                     if (currentActivityIndex_ >= 0) {
+                        if (activityEntries_[currentActivityIndex_].detection.isEmpty()
+                                && !activityDetection.isEmpty())
+                            ++activityDetectionCount_;
                         activityEntries_[currentActivityIndex_].detection = activityDetection;
                         updateActivityItem(currentActivityIndex_);
                         updateActivitySummary();
-                        activityList_->scrollToBottom();
                     }
                     scanHashes_.insert(currentFile_, result.value(QStringLiteral("sha256")).toString());
                     if (infected) {
@@ -1850,6 +1859,7 @@ private:
     QString statusText_;
     QList<DetectionEntry> detectedFiles_;
     QList<ActivityEntry> activityEntries_;
+    int activityDetectionCount_ = 0;
     QSet<QString> currentDetectionKeys_;
     int currentActivityIndex_ = -1;
     QHash<QString, QString> scanHashes_;

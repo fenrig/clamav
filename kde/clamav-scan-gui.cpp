@@ -939,7 +939,7 @@ private:
                                           [](const DetectionEntry &entry) {
                                               return !entry.handled && !entry.deleted;
                                           });
-        const bool allHandled = infectionDetected_ && !detectedFiles_.isEmpty() && pending == 0;
+        const bool allHandled = !running && infectionDetected_ && !detectedFiles_.isEmpty() && pending == 0;
         const QColor blue(60, 145, 220);
         const QColor red(210, 55, 65);
         const QColor green(80, 170, 100);

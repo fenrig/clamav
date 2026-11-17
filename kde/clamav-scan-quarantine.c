@@ -12,19 +12,14 @@ static void scan_one(const char *path)
 {
     printf("SCAN_FILE: %s\n", path);
     fflush(stdout);
-    struct json_object *result = scan_file(path, quarantine_mode, "plasma", "", "{}");
+    struct json_object *result = scan_file(path, quarantine_mode, "plasma", "", "{}", 0);
     struct json_object *value;
-    const char *message = "Scan failed";
 
     if (result == NULL) {
         scan_status = 2;
         return;
     }
-    if (json_object_object_get_ex(result, "message", &value))
-        message = json_object_get_string(value);
     printf("SCAN_RESULT: %s\n", json_object_to_json_string_ext(result, JSON_C_TO_STRING_PLAIN));
-    fflush(stdout);
-    puts(message);
     fflush(stdout);
     if (json_object_object_get_ex(result, "infected", &value)
             && json_object_get_boolean(value))

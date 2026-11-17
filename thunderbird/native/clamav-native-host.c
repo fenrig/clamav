@@ -391,9 +391,10 @@ static char *replace_text(const char *text, const char *needle, const char *repl
 }
 
 static struct json_object *scan_file(const char *path, int quarantine, const char *component,
-                                     const char *origin, const char *metadata_json)
+                                     const char *origin, const char *metadata_json,
+                                     int include_clean_hash)
 {
-    char sha256[65];
+    char sha256[65] = "";
     char *output = NULL;
     int file_fd;
     char *details = NULL;
@@ -412,7 +413,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     display_name = strrchr(path, '/');
     display_name = display_name == NULL ? path : display_name + 1;
     file_fd = open(path, O_RDONLY);
-    if (file_fd < 0 || !sha256_fd(file_fd, sha256)) {
+    if (file_fd < 0 || (include_clean_hash && !sha256_fd(file_fd, sha256))) {
         if (file_fd >= 0)
             close(file_fd);
         return failure("Unable to read attachment", NULL);
@@ -437,15 +438,27 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         result = 1;
     if (strstr(output == NULL ? "" : output, " OK") != NULL)
         result = 0;
+    if (result == 1 && sha256[0] == '\0') {
+        file_fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (file_fd >= 0) {
+            if (!sha256_fd(file_fd, sha256))
+                sha256[0] = '\0';
+            close(file_fd);
+        }
+    }
     if (!used_clamd) {
         details = replace_text(output == NULL ? "none" : output, path, display_name);
         if (details == NULL)
             details = strdup("none");
         {
-            size_t size = strlen(details) + strlen("\nSHA-256: ") + 64 + strlen("\nScanner: clamscan") + 1;
+            const size_t hash_length = sha256[0] == '\0' ? 0 : strlen("\nSHA-256: ") + 64;
+            size_t size = strlen(details) + hash_length + strlen("\nScanner: clamscan") + 1;
             char *expanded = (char *)malloc(size);
             if (expanded != NULL) {
-                sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamscan", details, sha256);
+                if (sha256[0] != '\0')
+                    sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamscan", details, sha256);
+                else
+                    sprintf(expanded, "%s\nScanner: clamscan", details);
                 free(details);
                 details = expanded;
             }
@@ -455,10 +468,14 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         if (details == NULL)
             details = strdup("none");
         {
-            size_t size = strlen(details) + strlen("\nSHA-256: ") + 64 + strlen("\nScanner: clamd (FILDES)") + 1;
+            const size_t hash_length = sha256[0] == '\0' ? 0 : strlen("\nSHA-256: ") + 64;
+            size_t size = strlen(details) + hash_length + strlen("\nScanner: clamd (FILDES)") + 1;
             char *expanded = (char *)malloc(size);
             if (expanded != NULL) {
-                sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamd (FILDES)", details, sha256);
+                if (sha256[0] != '\0')
+                    sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamd (FILDES)", details, sha256);
+                else
+                    sprintf(expanded, "%s\nScanner: clamd (FILDES)", details);
                 free(details);
                 details = expanded;
             }
@@ -622,7 +639,7 @@ int main(void)
             if (json_object_object_get_ex(request, "metadata", &metadata_object)
                     && json_object_is_type(metadata_object, json_type_object))
                 metadata_json = json_object_to_json_string_ext(metadata_object, JSON_C_TO_STRING_PLAIN);
-            response = scan_file(path, quarantine, component, origin, metadata_json);
+            response = scan_file(path, quarantine, component, origin, metadata_json, 1);
         }
         if (request != NULL)
             json_object_put(request);

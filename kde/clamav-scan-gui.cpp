@@ -723,31 +723,35 @@ private:
                 "QFrame#detectionRow { background: rgba(%1, %2, %3, 35); border: 1px solid rgba(%1, %2, %3, 120);"
                 " border-left: 5px solid rgb(%1, %2, %3); border-radius: 5px; }")
                 .arg(color.red()).arg(color.green()).arg(color.blue()));
-            auto *rowLayout = new QVBoxLayout(row);
+            auto *rowLayout = new QHBoxLayout(row);
             rowLayout->setContentsMargins(10, 8, 10, 8);
+            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓") : QStringLiteral("○"), row);
+            handledState->setFixedWidth(26);
+            handledState->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
+            handledState->setStyleSheet(QStringLiteral("font-size: 22px; font-weight: 700; color: %1;")
+                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
+                                                              : QStringLiteral("palette(mid)")));
+            rowLayout->addWidget(handledState);
+            auto *textColumn = new QWidget(row);
+            auto *textLayout = new QVBoxLayout(textColumn);
+            textLayout->setContentsMargins(0, 0, 0, 0);
             auto *file = new QLabel(QDir::toNativeSeparators(detected.path), row);
             file->setToolTip(detected.path);
             file->setStyleSheet(QStringLiteral("font-weight: 600;"));
-            rowLayout->addWidget(file);
+            textLayout->addWidget(file);
             auto *levelLabel = new QLabel(detectionLevelLabel(level), row);
             levelLabel->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
                                        .arg(color.red()).arg(color.green()).arg(color.blue()));
-            rowLayout->addWidget(levelLabel);
-            auto *detectionLine = new QHBoxLayout;
-            auto *handledState = new QLabel(detected.handled ? QStringLiteral("✓") : QStringLiteral("○"), row);
-            handledState->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: %1;")
-                                        .arg(detected.handled ? QStringLiteral("rgb(80, 170, 100)")
-                                                              : QStringLiteral("palette(mid)")));
-            detectionLine->addWidget(handledState);
+            textLayout->addWidget(levelLabel);
             auto *detection = new QLabel(detected.detection, row);
             detection->setWordWrap(true);
-            detectionLine->addWidget(detection, 1);
-            rowLayout->addLayout(detectionLine);
+            textLayout->addWidget(detection);
             if (detected.deleted) {
                 auto *deleted = new QLabel(tr("✓ Deleted"), row);
                 deleted->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
-                rowLayout->addWidget(deleted);
+                textLayout->addWidget(deleted);
             }
+            rowLayout->addWidget(textColumn, 1);
             item->setData(Qt::UserRole, sourceIndex);
             item->setSizeHint(row->sizeHint());
             detectionsList_->setItemWidget(item, row);

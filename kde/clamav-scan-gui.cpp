@@ -472,6 +472,7 @@ public:
                     addPathItem(path);
                 }
             targetSummary_->setText(targetDescription());
+            setTargetEditingEnabled(true);
         });
         connect(addFolderButton_, &QPushButton::clicked, this, [this, addPathItem] {
             const QString path = QFileDialog::getExistingDirectory(this, tr("Choose a folder to scan"));
@@ -479,6 +480,7 @@ public:
                 paths_ << path;
                 addPathItem(path);
                 targetSummary_->setText(targetDescription());
+                setTargetEditingEnabled(true);
             }
         });
         connect(removePathsButton_, &QPushButton::clicked, this, [this] {
@@ -490,11 +492,13 @@ public:
             paths_ = paths;
             qDeleteAll(pathsList_->selectedItems());
             targetSummary_->setText(targetDescription());
+            setTargetEditingEnabled(true);
         });
         connect(clearPathsButton_, &QPushButton::clicked, this, [this] {
             paths_.clear();
             pathsList_->clear();
             targetSummary_->setText(targetDescription());
+            setTargetEditingEnabled(true);
         });
         connect(rescanButton_, &QPushButton::clicked, this, [this] {
             if (paths_.isEmpty()) {

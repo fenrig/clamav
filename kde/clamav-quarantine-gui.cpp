@@ -633,8 +633,6 @@ private:
             }), blocks.end());
         }
         QHash<QString, QColor> entryColors;
-        if (logNewestFirst_)
-            std::reverse(blocks.begin(), blocks.end());
         for (const QString &block : blocks) {
             const QStringList lines = block.split(QLatin1Char('\n'));
             if (lines.isEmpty())
@@ -655,6 +653,8 @@ private:
             if (!id.isEmpty())
                 entryColors.insert(id, color);
         }
+        if (logNewestFirst_)
+            std::reverse(blocks.begin(), blocks.end());
         for (const QString &block : blocks) {
             const QStringList lines = block.split(QLatin1Char('\n'));
             if (lines.isEmpty())

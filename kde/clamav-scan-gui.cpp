@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTextEdit>
 #include <QTextCursor>
@@ -147,6 +148,11 @@ struct DetectionEntry {
     QString quarantineId;
     bool handled = false;
     bool deleted = false;
+};
+
+struct ActivityEntry {
+    QString path;
+    QString detection;
 };
 
 QString formatBytes(double value)
@@ -417,12 +423,15 @@ public:
         scanLayout->addWidget(currentFileLabel_);
         auto *activity = new QGroupBox(tr("Scan activity"), this);
         auto *activityLayout = new QVBoxLayout(activity);
-        output_ = new QTextEdit(activity);
-        output_->setReadOnly(true);
-        output_->setLineWrapMode(QTextEdit::NoWrap);
-        output_->setPlaceholderText(tr("Threats will appear here if ClamAV detects any."));
-        output_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-        activityLayout->addWidget(output_);
+        activityList_ = new QListWidget(activity);
+        activityList_->setFrameShape(QFrame::NoFrame);
+        activityList_->setWordWrap(true);
+        activityList_->setAlternatingRowColors(false);
+        activitySummary_ = new QLabel(tr("No files scanned yet."), activity);
+        activitySummary_->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(mid);"));
+        activitySummary_->setWordWrap(true);
+        activityLayout->addWidget(activitySummary_);
+        activityLayout->addWidget(activityList_);
         scanLayout->addWidget(activity, 1);
 
         auto *buttons = new QHBoxLayout;
@@ -660,12 +669,14 @@ private:
         waitingForTargets_ = false;
         cancelled_ = false;
         infectionDetected_ = false;
-        detectedFiles_.clear();
+        infectionDetected_ = !detectedFiles_.isEmpty();
+        currentDetectionKeys_.clear();
         scanHashes_.clear();
-        rawOutput_.clear();
-        output_->clear();
-        detectionsList_->clear();
-        updateSelectedDetection();
+        activityList_->clear();
+        activityEntries_.clear();
+        currentActivityIndex_ = -1;
+        updateActivitySummary();
+        refreshDetectionsPanel();
         tabs_->setCurrentWidget(scanPage_);
         summary_->setText(tr("Preparing scan…"));
         currentFileLabel_->setText(tr("Current file: preparing…"));
@@ -706,7 +717,7 @@ private:
             color = blue;
             title = tr("Choose scan locations");
             details = tr("Add at least one file or folder, then start the scan.");
-        } else if (running && infectionDetected_) {
+        } else if (running && pending > 0) {
             color = red;
             title = tr("Threat detected");
             details = pending > 0
@@ -735,43 +746,43 @@ private:
         statusCardDetails_->setText(details);
     }
 
-    static QString friendlyActivity(const QString &raw)
+    static QColor activityColor(const QString &detection)
     {
-        QStringList lines;
-        for (const QString &sourceLine : raw.split(QLatin1Char('\n'))) {
-            const QString line = sourceLine.trimmed();
-            if (line.isEmpty())
-                continue;
-            if (line.startsWith(QStringLiteral("No viruses found."))) {
-                continue;
-            } else if (line.startsWith(QStringLiteral("A virus was identified."))) {
-                lines << QStringLiteral("⚠  Threat detected");
-            } else if (line.startsWith(QStringLiteral("Quarantined:"))) {
-                lines << QStringLiteral("↪  Threat moved to quarantine");
-            } else if (line.startsWith(QStringLiteral("Quarantine failed"))) {
-                lines << QStringLiteral("⚠  Threat found, but quarantine failed");
-            } else if (line.startsWith(QStringLiteral("SHA-256:"))
-                       || line.startsWith(QStringLiteral("Scanner:"))
-                       || line.startsWith(QStringLiteral("SCAN_FILE: "))
-                       || line.contains(QStringLiteral("FILDES"))) {
-                continue;
-            } else {
-                const QRegularExpression descriptor(QStringLiteral("^fd\\[\\d+\\]:\\s*(.+)$"));
-                const auto match = descriptor.match(line);
-                if (match.hasMatch() && match.captured(1).compare(QStringLiteral("OK"), Qt::CaseInsensitive) == 0)
-                    continue;
-                if (match.hasMatch() && match.captured(1).endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
-                    lines << tr("⚠  Threat detected: %1").arg(match.captured(1).left(match.captured(1).size() - 6).trimmed());
-                    continue;
-                }
-            }
-            if (line.endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
-                const QString path = line.left(line.indexOf(QStringLiteral(" FOUND"))).trimmed();
-                lines << tr("⚠  Threat detected: %1")
-                    .arg(QFileInfo(path.section(QLatin1Char(':'), 0, 0)).fileName());
-            }
+        if (detection.isEmpty())
+            return QColor(130, 130, 130);
+        switch (detectionLevel(detection)) {
+        case 1: return QColor(80, 170, 100);
+        case 2: return QColor(155, 89, 182);
+        default: return QColor(210, 55, 65);
         }
-        return lines.join(QLatin1Char('\n'));
+    }
+
+    void updateActivityItem(int index)
+    {
+        if (!activityList_ || index < 0 || index >= activityEntries_.size())
+            return;
+        const ActivityEntry &entry = activityEntries_.at(index);
+        QListWidgetItem *item = activityList_->item(index);
+        const QColor color = activityColor(entry.detection);
+        item->setText(entry.detection.isEmpty()
+            ? tr("Scanned · %1").arg(QDir::toNativeSeparators(entry.path))
+            : tr("Threat · %1\n%2").arg(QDir::toNativeSeparators(entry.path), entry.detection));
+        item->setForeground(entry.detection.isEmpty() ? QColor(130, 130, 130) : color);
+        item->setBackground(QColor(color.red(), color.green(), color.blue(), entry.detection.isEmpty() ? 12 : 28));
+        item->setSizeHint(QSize(item->sizeHint().width(), entry.detection.isEmpty() ? 32 : 52));
+    }
+
+    void updateActivitySummary()
+    {
+        if (!activitySummary_)
+            return;
+        const int detections = std::count_if(activityEntries_.cbegin(), activityEntries_.cend(),
+            [](const ActivityEntry &entry) { return !entry.detection.isEmpty(); });
+        activitySummary_->setText(detections == 0
+            ? tr("%1 file(s) scanned · no detections found.").arg(activityEntries_.size())
+            : tr("%1 file(s) scanned · %2 detection(s) found.").arg(activityEntries_.size()).arg(detections));
+        activitySummary_->setStyleSheet(QStringLiteral("font-weight: 600; color: %1;")
+            .arg(detections == 0 ? QStringLiteral("palette(mid)") : QStringLiteral("rgb(210, 55, 65)")));
     }
 
     QString targetDescription() const
@@ -876,14 +887,39 @@ private:
             const QString incoming = QString::fromLocal8Bit(text);
             for (const QString &sourceLine : incoming.split(QLatin1Char('\n'))) {
                 const QString line = sourceLine.trimmed();
-                if (line.startsWith(QStringLiteral("SCAN_FILE: ")))
+                if (line.startsWith(QStringLiteral("SCAN_FILE: "))) {
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
-                else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
+                    activityEntries_.append({currentFile_, {}});
+                    currentActivityIndex_ = activityEntries_.size() - 1;
+                    activityList_->addItem(QString());
+                    updateActivityItem(currentActivityIndex_);
+                    updateActivitySummary();
+                    activityList_->scrollToBottom();
+                } else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
                     const QJsonDocument document = QJsonDocument::fromJson(
                         line.mid(QStringLiteral("SCAN_RESULT: ").size()).toUtf8());
                     const QJsonObject result = document.object();
+                    const bool infected = result.value(QStringLiteral("infected")).toBool();
+                    QString activityDetection;
+                    if (infected) {
+                        const QString activityMessage = result.value(QStringLiteral("message")).toString();
+                        for (const QString &messageLine : activityMessage.split(QLatin1Char('\n'))) {
+                            if (messageLine.trimmed().endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
+                                activityDetection = canonicalDetection(messageLine);
+                                break;
+                            }
+                        }
+                        if (activityDetection.isEmpty())
+                            activityDetection = canonicalDetection(activityMessage.section(QLatin1Char('\n'), 0, 0));
+                    }
+                    if (currentActivityIndex_ >= 0) {
+                        activityEntries_[currentActivityIndex_].detection = activityDetection;
+                        updateActivityItem(currentActivityIndex_);
+                        updateActivitySummary();
+                        activityList_->scrollToBottom();
+                    }
                     scanHashes_.insert(currentFile_, result.value(QStringLiteral("sha256")).toString());
-                    if (result.value(QStringLiteral("infected")).toBool()) {
+                    if (infected) {
                         QString detection;
                         const QString message = result.value(QStringLiteral("message")).toString();
                         for (const QString &messageLine : message.split(QLatin1Char('\n'))) {
@@ -894,14 +930,18 @@ private:
                         }
                         if (detection.isEmpty())
                             detection = canonicalDetection(message.section(QLatin1Char('\n'), 0, 0));
-                        const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                        const QString detectionKey = currentFile_ + QLatin1Char('\n') + detection;
+                        const bool knownThisScan = currentDetectionKeys_.contains(detectionKey);
+                        const bool knownUnhandled = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                             [this, &detection](const DetectionEntry &entry) {
-                                return entry.path == currentFile_
+                                return !entry.handled && !entry.deleted
+                                    && entry.path == currentFile_
                                     && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
                             });
-                        if (!known)
+                        if (!knownThisScan && !knownUnhandled)
                             detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
                                                    result.value(QStringLiteral("quarantined")).toBool(), false});
+                        currentDetectionKeys_.insert(detectionKey);
                         infectionDetected_ = true;
                     }
                 }
@@ -913,22 +953,8 @@ private:
                             entry.sha256 = hash;
                 }
             }
-            rawOutput_ += incoming;
-            for (const QString &sourceLine : rawOutput_.split(QLatin1Char('\n'))) {
-                const QString line = sourceLine.trimmed();
-                if (line.startsWith(QStringLiteral("SCAN_RESULT: ")))
-                    continue;
-                if (line.startsWith(QStringLiteral("Quarantined: "), Qt::CaseInsensitive)) {
-                    const QString path = line.mid(QStringLiteral("Quarantined: ").size()).trimmed();
-                    for (auto &entry : detectedFiles_)
-                        if (entry.path == path)
-                            entry.handled = true;
-                }
-            }
             refreshDetectionsPanel();
             updateStatusCard();
-            output_->setPlainText(friendlyActivity(rawOutput_));
-            output_->ensureCursorVisible();
         }
     }
 
@@ -1232,7 +1258,7 @@ private:
             .arg(cpuPeak_, 0, 'f', 1));
         ioStatus_->setText(tr("read %1 · write %2 · peak %3/s")
             .arg(formatBytes(ioTotalRead_)).arg(formatBytes(ioTotalWrite_)).arg(formatBytes(ioPeak_)));
-        output_->ensureCursorVisible();
+        activityList_->scrollToBottom();
     }
 
     void closeEvent(QCloseEvent *event) override
@@ -1447,8 +1473,10 @@ private:
     QString socketPath_;
     QString cpuTarget_ = tr("Scanner");
     QString statusText_;
-    QString rawOutput_;
     QList<DetectionEntry> detectedFiles_;
+    QList<ActivityEntry> activityEntries_;
+    QSet<QString> currentDetectionKeys_;
+    int currentActivityIndex_ = -1;
     QHash<QString, QString> scanHashes_;
     QString currentFile_;
     QList<qint64> pids_;
@@ -1460,6 +1488,7 @@ private:
     QLabel *summary_ = nullptr;
     QLabel *targetSummary_ = nullptr;
     QLabel *currentFileLabel_ = nullptr;
+    QLabel *activitySummary_ = nullptr;
     QFrame *statusCard_ = nullptr;
     QLabel *statusCardTitle_ = nullptr;
     QLabel *statusCardDetails_ = nullptr;
@@ -1496,7 +1525,7 @@ private:
     QPushButton *detailQuarantineAllButton_ = nullptr;
     QPushButton *detailDeleteAllButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
-    QTextEdit *output_ = nullptr;
+    QListWidget *activityList_ = nullptr;
     QPushButton *action_ = nullptr;
     QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;
     QTimer pulseTimer_;

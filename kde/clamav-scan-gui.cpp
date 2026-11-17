@@ -40,6 +40,7 @@
 #include <QSplitter>
 #include <QTabWidget>
 #include <QUrl>
+#include <QUuid>
 
 #include "../quarantine/quarantine.h"
 
@@ -263,8 +264,17 @@ static QString prettyAuditLog(const QString &path)
             lines << QStringLiteral("  %1: %2").arg(QObject::tr("Source"), record.value(QStringLiteral("source")).toString());
         if (record.contains(QStringLiteral("component")))
             lines << QStringLiteral("  %1: %2").arg(QObject::tr("Component"), record.value(QStringLiteral("component")).toString());
-        if (record.contains(QStringLiteral("detail")))
-            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Details"), record.value(QStringLiteral("detail")).toString());
+        if (record.contains(QStringLiteral("detail"))) {
+            QString detail = record.value(QStringLiteral("detail")).toString();
+            const QRegularExpression scanIdExpression(QStringLiteral("^scan=([^;]+);?\\s*(.*)$"));
+            const auto scanIdMatch = scanIdExpression.match(detail);
+            if (scanIdMatch.hasMatch()) {
+                lines << QStringLiteral("  %1: %2").arg(QObject::tr("Scan"), scanIdMatch.captured(1));
+                detail = scanIdMatch.captured(2);
+            }
+            if (!detail.isEmpty())
+                lines << QStringLiteral("  %1: %2").arg(QObject::tr("Details"), detail);
+        }
         lines << QString();
     }
     return lines.isEmpty() ? QObject::tr("No readable log entries yet.") : lines.join(QLatin1Char('\n'));
@@ -322,7 +332,9 @@ class ScanDialog final : public QDialog
 {
 public:
     ScanDialog(const QString &scanner, const QStringList &paths, bool quarantine)
-        : scanner_(scanner), paths_(paths), quarantine_(quarantine), started_(std::chrono::steady_clock::now())
+        : scanner_(scanner), paths_(paths), quarantine_(quarantine),
+          scanId_(QUuid::createUuid().toString(QUuid::WithoutBraces)),
+          started_(std::chrono::steady_clock::now())
     {
         setWindowTitle(tr("ClamAV virus scan"));
         setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
@@ -772,17 +784,39 @@ private:
             logView_->setItemWidget(item, empty);
             return;
         }
-        for (const QString &block : text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
+        const QStringList blocks = text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts);
+        QHash<QString, QColor> scanColors;
+        QHash<QString, QColor> scanFinalColors;
+        const QList<QColor> baseColors = {QColor("#3daee9"), QColor("#d9a441"), QColor("#9b59b6")};
+        int nextColor = 0;
+        for (const QString &block : blocks) {
+            const QStringList lines = block.split(QLatin1Char('\n'));
+            QString scanId;
+            for (const QString &line : lines)
+                if (line.startsWith(QStringLiteral("  Scan: ")))
+                    scanId = line.mid(QStringLiteral("  Scan: ").size());
+            if (!scanId.isEmpty() && !scanColors.contains(scanId))
+                scanColors.insert(scanId, baseColors.at(nextColor++ % baseColors.size()));
+            if (!scanId.isEmpty() && lines.first().contains(QStringLiteral("] scan-close "))) {
+                scanFinalColors.insert(scanId, block.contains(QStringLiteral("all detections handled"))
+                    ? QColor("#50aa64") : QColor("#da4453"));
+            }
+        }
+        for (const QString &block : blocks) {
             const QStringList lines = block.split(QLatin1Char('\n'));
             if (lines.isEmpty())
                 continue;
-            const bool failed = lines.first().contains(QStringLiteral(" · failed"));
+            QString scanId;
+            for (const QString &line : lines)
+                if (line.startsWith(QStringLiteral("  Scan: ")))
+                    scanId = line.mid(QStringLiteral("  Scan: ").size());
+            const QColor color = scanFinalColors.value(scanId, scanColors.value(scanId, QColor("#3daee9")));
             auto *item = new QListWidgetItem(logView_);
             auto *card = new QFrame(logView_);
             card->setStyleSheet(QStringLiteral(
                 "QFrame { background: palette(alternate-base); border: 1px solid %1; border-left: 5px solid %1; border-radius: 8px; }"
                 "QLabel { border: none; background: transparent; }")
-                .arg(failed ? QStringLiteral("#da4453") : QStringLiteral("#3daee9")));
+                .arg(color.name()));
             auto *layout = new QVBoxLayout(card);
             layout->setContentsMargins(12, 9, 12, 9);
             auto *header = new QLabel(lines.first(), card);
@@ -805,7 +839,8 @@ private:
     {
         const QByteArray actionBytes = action.toUtf8();
         const QByteArray sourceBytes = source.toUtf8();
-        const QByteArray detailBytes = detail.toUtf8();
+        const QString loggedDetail = QStringLiteral("scan=%1; %2").arg(scanId_, detail);
+        const QByteArray detailBytes = loggedDetail.toUtf8();
         clamav_scan_audit(actionBytes.constData(), "plasma",
                           source.isEmpty() ? nullptr : sourceBytes.constData(),
                           detail.isEmpty() ? nullptr : detailBytes.constData(), success ? 1 : 0);
@@ -831,6 +866,7 @@ private:
         cancelled_ = false;
         paused_ = false;
         closeLogged_ = false;
+        scanId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
         cpuSample_ = -1;
         ioSample_ = {-1, -1};
         sampleTime_ = 0.0;
@@ -1475,7 +1511,7 @@ private:
             return;
         }
         if (finished_) {
-            logHandledClose();
+            logScanClose();
             accept();
             return;
         }
@@ -1593,7 +1629,7 @@ private:
             return;
         }
         if (finished_)
-            logHandledClose();
+            logScanClose();
         if (!finished_ && process_->state() != QProcess::NotRunning)
             process_->kill();
         event->accept();
@@ -1630,7 +1666,7 @@ private:
         return warning.clickedButton() == closeAnyway;
     }
 
-    void logHandledClose()
+    void logScanClose()
     {
         if (closeLogged_ || detectedFiles_.isEmpty())
             return;
@@ -1638,10 +1674,15 @@ private:
                                             [](const DetectionEntry &entry) {
                                                 return entry.handled || entry.deleted;
                                             });
-        if (!allHandled)
-            return;
         writeAudit(QStringLiteral("scan-close"), QString(),
-                   QStringLiteral("all detections handled; count=%1").arg(detectedFiles_.size()));
+                   allHandled
+                       ? QStringLiteral("all detections handled; count=%1").arg(detectedFiles_.size())
+                       : QStringLiteral("unhandled detections remain; count=%1").arg(
+                             std::count_if(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                                           [](const DetectionEntry &entry) {
+                                               return !entry.handled && !entry.deleted;
+                                           })),
+                   allHandled);
         closeLogged_ = true;
     }
 
@@ -1823,6 +1864,7 @@ private:
     QString scanner_;
     QStringList paths_;
     bool quarantine_ = false;
+    QString scanId_;
     bool waitingForTargets_ = false;
     QString socketPath_;
     QString cpuTarget_ = tr("Scanner");

@@ -414,7 +414,17 @@ public:
         targetsLayout->addWidget(targetsInfo);
         pathsList_ = new QListWidget(targetsPanel);
         pathsList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-        pathsList_->addItems(paths_);
+        const auto addPathItem = [this](const QString &path) {
+            auto *item = new QListWidgetItem(path, pathsList_);
+            const bool folder = QFileInfo(path).isDir();
+            item->setIcon(QIcon::fromTheme(folder ? QStringLiteral("folder")
+                                                  : QStringLiteral("text-x-generic"),
+                                           QIcon::fromTheme(folder ? QStringLiteral("folder-open")
+                                                                    : QStringLiteral("document-open"))));
+            item->setToolTip(folder ? tr("Folder to scan") : tr("File to scan"));
+        };
+        for (const QString &path : std::as_const(paths_))
+            addPathItem(path);
         targetsLayout->addWidget(pathsList_, 1);
         auto *targetButtons = new QHBoxLayout;
         addFilesButton_ = new QPushButton(tr("Add files…"), targetsPanel);
@@ -435,20 +445,20 @@ public:
         targetsLayout->addLayout(targetButtons);
         tabs_->insertTab(0, targetsPanel, tr("Locations"));
         targetsPanel_ = targetsPanel;
-        connect(addFilesButton_, &QPushButton::clicked, this, [this] {
+        connect(addFilesButton_, &QPushButton::clicked, this, [this, addPathItem] {
             const QStringList selected = QFileDialog::getOpenFileNames(this, tr("Choose files to scan"));
             for (const QString &path : selected)
                 if (!paths_.contains(path)) {
                     paths_ << path;
-                    pathsList_->addItem(path);
+                    addPathItem(path);
                 }
             targetSummary_->setText(targetDescription());
         });
-        connect(addFolderButton_, &QPushButton::clicked, this, [this] {
+        connect(addFolderButton_, &QPushButton::clicked, this, [this, addPathItem] {
             const QString path = QFileDialog::getExistingDirectory(this, tr("Choose a folder to scan"));
             if (!path.isEmpty() && !paths_.contains(path)) {
                 paths_ << path;
-                pathsList_->addItem(path);
+                addPathItem(path);
                 targetSummary_->setText(targetDescription());
             }
         });

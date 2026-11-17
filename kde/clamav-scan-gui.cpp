@@ -335,10 +335,10 @@ public:
         statusIcon_->setFixedSize(36, 36);
         setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar());
         headingRow->addWidget(statusIcon_);
-        auto *heading = new QLabel(quarantine_ ? tr("Scanning and protecting with ClamAV")
-                                                : tr("Scanning with ClamAV"), this);
-        heading->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
-        headingRow->addWidget(heading);
+        heading_ = new QLabel(quarantine_ ? tr("Scanning and protecting with ClamAV")
+                                           : tr("Scanning with ClamAV"), this);
+        heading_->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        headingRow->addWidget(heading_);
         headingRow->addStretch();
         layout->addLayout(headingRow);
 
@@ -925,6 +925,14 @@ private:
             .arg(background).arg(color.red()).arg(color.green()).arg(color.blue()));
         statusCardTitle_->setText(title);
         statusCardDetails_->setText(details);
+        const QString normalHeading = quarantine_ ? tr("Scanning and protecting with ClamAV")
+                                                  : tr("Scanning with ClamAV");
+        heading_->setText(allHandled && !running
+            ? QStringLiteral("✓ ") + normalHeading
+            : normalHeading);
+        heading_->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600; color: %1;")
+                                .arg(allHandled && !running ? QStringLiteral("#50aa64")
+                                                             : QStringLiteral("palette(window-text)")));
     }
 
     static QColor activityColor(const QString &detection)
@@ -1834,6 +1842,7 @@ private:
     QProgressBar *cpuMeter_ = nullptr;
     QProgressBar *ioMeter_ = nullptr;
     QLabel *statusIcon_ = nullptr;
+    QLabel *heading_ = nullptr;
     QLabel *summary_ = nullptr;
     QLabel *targetSummary_ = nullptr;
     QLabel *currentFileLabel_ = nullptr;

@@ -40,7 +40,8 @@ function pumpNativeQueue() {
   }
   nativeCurrent = nativeQueue.shift();
   try {
-    nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine, component: "thunderbird" });
+    nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine,
+      component: "thunderbird", origin: nativeCurrent.origin, metadata: nativeCurrent.metadata });
   } catch (error) {
     const request = nativeCurrent;
     nativeCurrent = null;
@@ -50,11 +51,31 @@ function pumpNativeQueue() {
   }
 }
 
-function scanWithNativeHost(path, quarantine = false) {
+function scanWithNativeHost(path, quarantine = false, origin = "", metadata = {}) {
   return new Promise((resolve, reject) => {
-    nativeQueue.push({ path, quarantine, resolve, reject });
+    nativeQueue.push({ path, quarantine, origin, metadata, resolve, reject });
     pumpNativeQueue();
   });
+}
+
+async function quarantineOrigin(messageId) {
+  try {
+    const mail = await messenger.messages.get(messageId);
+    const sender = mail.author || "Unknown sender";
+    const subject = mail.subject || "(no subject)";
+    return `From: ${sender}\nSubject: ${subject}`;
+  } catch (_) {
+    return "Message origin unavailable";
+  }
+}
+
+async function quarantineMetadata(messageId) {
+  try {
+    const mail = await messenger.messages.get(messageId);
+    return { sender: mail.author || "", subject: mail.subject || "" };
+  } catch (_) {
+    return {};
+  }
 }
 
 async function openQuarantine() {
@@ -317,7 +338,8 @@ if (messenger.compose?.onBeforeSend) {
       await createNotification({
         type: "basic",
         title: message("outgoingScanFailed"),
-        message: error.message
+        message: message("scanErrorMessage"),
+        iconUrl: messenger.runtime.getURL("notification-logo.svg")
       });
       return { cancel: true };
     }
@@ -348,7 +370,7 @@ if (messenger.compose?.onBeforeSend) {
       type: "basic",
       title: message("outgoingWarning"),
       message: parts.join("\n\n"),
-      iconUrl: messenger.runtime.getURL("logo.svg")
+      iconUrl: messenger.runtime.getURL("notification-logo.svg")
     });
     return { cancel: true };
   });
@@ -371,16 +393,19 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
   const notification = {
     type: "basic",
     title: result.infected
-      ? `${phishing ? "⚠️ Possible phishing link" : "🛑 Virus detected"}: ${name}`
-      : `✅ ClamAV scan complete: ${name}`,
+      ? (result.quarantined
+        ? message("quarantineNotificationTitle")
+        : message(phishing ? "phishingNotificationTitle" : "threatNotificationTitle"))
+      : message("scanClean"),
     message: result.infected
-      ? `${phishing ? "This message may be a phishing attack. Do not click its links." : "This attachment was identified as dangerous."}\n\nAttachment: ${name}\n\n${result.message}`
-      : `Attachment: ${name}\n\n${result.message}`,
-    iconUrl: messenger.runtime.getURL("logo.svg")
+      ? message(result.quarantined
+        ? "quarantineNotificationMessage"
+        : (phishing ? "phishingNotificationMessage" : "threatNotificationMessage"), name)
+      : message("scanCleanMessage", name),
+    iconUrl: messenger.runtime.getURL("notification-logo.svg")
   };
   if (result.infected && result.quarantined) {
     const notificationId = `clamav-quarantine-${Date.now()}-${++notificationSequence}`;
-    notification.message += "\n\nClick this notification to open quarantine.";
     return createNotification(notification, notificationId);
   }
   await createNotification(notification);
@@ -398,15 +423,16 @@ async function scanSavedDownload(downloadId) {
   const [download] = await messenger.downloads.search({ id: downloadId });
   if (!download || download.state !== "complete" || !download.filename || isInternalScanDownload(download)) return;
   try {
-    const result = await scanWithNativeHost(download.filename, true);
+    const result = await scanWithNativeHost(download.filename, true, download.url || "");
     if (!result || result.success === false)
       throw new Error(result?.message || "ClamAV could not complete the download scan");
     await showResult(result, true, download.filename);
   } catch (error) {
     await createNotification({
       type: "basic",
-      title: "ClamAV download scan failed",
-      message: `${download.filename.split(/[\\/]/).pop()}: ${error.message}`
+      title: message("scanFailed"),
+      message: message("scanErrorMessage"),
+      iconUrl: messenger.runtime.getURL("notification-logo.svg")
     });
   }
 }
@@ -642,7 +668,8 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
         conflictAction: "uniquify"
       });
       const download = await waitForDownload(downloadId);
-      const scan = await scanWithNativeHost(download.filename);
+      const scan = await scanWithNativeHost(download.filename, false, await quarantineOrigin(messageId),
+        await quarantineMetadata(messageId));
       if (!scan || scan.success === false) throw new Error(scan?.message || "ClamAV could not complete the scan");
       await saveResult(hash, scan);
       if (scan.infected) {
@@ -779,7 +806,8 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
     objectUrl = URL.createObjectURL(file);
     downloadId = await messenger.downloads.download({ url: objectUrl, filename: `clamav-scan/${safeFilename(attachment.name)}`, saveAs: false, conflictAction: "uniquify" });
     const download = await waitForDownload(downloadId);
-    const result = await scanWithNativeHost(download.filename, true);
+    const result = await scanWithNativeHost(download.filename, true,
+      await quarantineOrigin(attachment.messageId), await quarantineMetadata(attachment.messageId));
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }
@@ -797,7 +825,12 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
       sha256: result.sha256
     });
   } catch (error) {
-    await createNotification({ type: "basic", title: "ClamAV scan failed", message: error.message });
+    await createNotification({
+      type: "basic",
+      title: message("scanFailed"),
+      message: message("scanErrorMessage"),
+      iconUrl: messenger.runtime.getURL("notification-logo.svg")
+    });
   } finally {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     if (downloadId !== undefined) await messenger.downloads.removeFile(downloadId).catch(() => {});

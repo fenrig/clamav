@@ -318,6 +318,18 @@ static int write_metadata(const char *path, const char *id,
     json_object_object_add(object, "source", json_object_new_string(metadata->source ? metadata->source : "unknown"));
     json_object_object_add(object, "detection", json_object_new_string(metadata->detection ? metadata->detection : "unknown"));
     json_object_object_add(object, "sha256", json_object_new_string(metadata->sha256 ? metadata->sha256 : ""));
+    json_object_object_add(object, "origin", json_object_new_string(metadata->origin ? metadata->origin : ""));
+    {
+        struct json_object *metadata_object = json_tokener_parse(
+            metadata->metadata_json ? metadata->metadata_json : "{}");
+        if (metadata_object != NULL && json_object_is_type(metadata_object, json_type_object))
+            json_object_object_add(object, "metadata", metadata_object);
+        else {
+            if (metadata_object != NULL)
+                json_object_put(metadata_object);
+            json_object_object_add(object, "metadata", json_object_new_object());
+        }
+    }
     json_object_object_add(object, "created", json_object_new_int64((int64_t)time(NULL)));
     json_object_object_add(object, "state", json_object_new_string(state ? state : "quarantined"));
     if (reason != NULL && reason[0] != '\0')
@@ -506,6 +518,14 @@ static int read_entry(const char *id, const char *metadata_path,
         snprintf(entry->source, sizeof(entry->source), "%s", "Not recorded (legacy entry)");
     else
         snprintf(entry->source, sizeof(entry->source), "%s", json_string(object, "source"));
+    snprintf(entry->origin, sizeof(entry->origin), "%s", json_string(object, "origin"));
+    {
+        struct json_object *metadata_object;
+        if (json_object_object_get_ex(object, "metadata", &metadata_object)
+                && json_object_is_type(metadata_object, json_type_object))
+            snprintf(entry->metadata, sizeof(entry->metadata), "%s",
+                     json_object_to_json_string_ext(metadata_object, JSON_C_TO_STRING_PLAIN));
+    }
     snprintf(entry->detection, sizeof(entry->detection), "%s", json_string(object, "detection"));
     snprintf(entry->sha256, sizeof(entry->sha256), "%s", json_string(object, "sha256"));
     snprintf(entry->quarantine_reason, sizeof(entry->quarantine_reason), "%s", json_string(object, "quarantine_reason"));

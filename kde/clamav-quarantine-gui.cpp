@@ -168,6 +168,8 @@ public:
         componentLabel = new QLabel(tr("Select an item"), this);
         originalLabel = new QLabel(this);
         sourceLabel = new QLabel(this);
+        originLabel = new QLabel(this);
+        metadataLabel = new QLabel(this);
         hashLabel = new QLabel(this);
         createdLabel = new QLabel(this);
         descriptionLabel = new QLabel(this);
@@ -214,6 +216,10 @@ public:
         details->setMinimumHeight(140);
         details->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         sourceLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        originLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        originLabel->setWordWrap(true);
+        metadataLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        metadataLabel->setWordWrap(true);
         hashLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
         descriptionLabel->setWordWrap(true);
         severityMeter->setRange(0, 4);
@@ -248,6 +254,8 @@ public:
         form->addRow(tr("Component:"), componentLabel);
         form->addRow(tr("Original name:"), originalLabel);
         form->addRow(tr("Source path:"), sourceLabel);
+        form->addRow(tr("Origin:"), originLabel);
+        form->addRow(tr("Metadata:"), metadataLabel);
         form->addRow(tr("SHA-256:"), hashLabel);
         form->addRow(tr("Created:"), createdLabel);
         contentLayout->addWidget(detailTitle);
@@ -562,6 +570,8 @@ private:
             detectionItem->setData(Qt::UserRole + 5, entry.created);
             detectionItem->setData(Qt::UserRole + 6, entry.payload_available);
             detectionItem->setData(Qt::UserRole + 7, QString::fromLocal8Bit(entry.quarantine_reason));
+            detectionItem->setData(Qt::UserRole + 8, QString::fromLocal8Bit(entry.origin));
+            detectionItem->setData(Qt::UserRole + 9, QString::fromLocal8Bit(entry.metadata));
             if (threatLevel(QString::fromLocal8Bit(entry.detection)) == 0) {
                 const QIcon questionIcon = QIcon::fromTheme(QStringLiteral("dialog-question"));
                 if (!questionIcon.isNull())
@@ -703,6 +713,8 @@ private:
             componentLabel->setText(tr("Select an item"));
             originalLabel->clear();
             sourceLabel->clear();
+            originLabel->clear();
+            metadataLabel->clear();
             hashLabel->clear();
             createdLabel->clear();
             descriptionLabel->clear();
@@ -721,6 +733,8 @@ private:
             componentLabel->setText(tr("Select an item"));
             originalLabel->clear();
             sourceLabel->clear();
+            originLabel->clear();
+            metadataLabel->clear();
             hashLabel->clear();
             createdLabel->clear();
             descriptionLabel->clear();
@@ -735,6 +749,8 @@ private:
         componentLabel->setText(componentItem ? componentItem->text() : tr("Unknown"));
         originalLabel->setText(item->data(Qt::UserRole + 2).toString());
         sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
+        originLabel->setText(item->data(Qt::UserRole + 8).toString());
+        metadataLabel->setText(item->data(Qt::UserRole + 9).toString());
         hashLabel->setText(item->data(Qt::UserRole + 4).toString());
         const auto created = item->data(Qt::UserRole + 5).toLongLong();
         createdLabel->setText(created > 0 ? QDateTime::fromSecsSinceEpoch(created).toString(Qt::TextDate) : tr("Unknown"));
@@ -905,6 +921,8 @@ private:
     QLabel *componentLabel;
     QLabel *originalLabel;
     QLabel *sourceLabel;
+    QLabel *originLabel;
+    QLabel *metadataLabel;
     QLabel *hashLabel;
     QLabel *createdLabel;
     QLabel *descriptionLabel;

@@ -54,7 +54,8 @@ function pumpNativeQueue() {
   }
   nativeCurrent = nativeQueue.shift();
   try {
-      nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine, component: "firefox" });
+      nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine,
+        component: "firefox", origin: nativeCurrent.origin, metadata: nativeCurrent.metadata });
   } catch (error) {
     const request = nativeCurrent;
     nativeCurrent = null;
@@ -64,9 +65,9 @@ function pumpNativeQueue() {
   }
 }
 
-function scanWithNativeHost(path, quarantine = false) {
+function scanWithNativeHost(path, quarantine = false, origin = "", metadata = {}) {
   return new Promise((resolve, reject) => {
-    nativeQueue.push({ path, quarantine, resolve, reject });
+    nativeQueue.push({ path, quarantine, origin, metadata, resolve, reject });
     pumpNativeQueue();
   });
 }
@@ -132,8 +133,8 @@ if (browser.webRequest?.onBeforeRequest) {
       await browser.notifications.create(`clamav-upload-${details.requestId}`, {
         type: "basic",
         title: message("uploadThreatWarning"),
-        message: message("uploadThreatMessage", [detected, new URL(details.url).hostname]),
-        iconUrl: browser.runtime.getURL("logo.svg")
+        message: message("uploadThreatMessage", [detected]),
+        iconUrl: browser.runtime.getURL("notification-logo.svg")
       });
       return { cancel: true };
     }
@@ -141,7 +142,8 @@ if (browser.webRequest?.onBeforeRequest) {
     await browser.notifications.create(`clamav-upload-scan-${details.requestId}`, {
       type: "basic",
       title: message("uploadScanIncomplete"),
-      message: message("uploadScanIncompleteMessage", [names, scan.failures[0].error])
+      message: message("uploadScanIncompleteMessage", [names]),
+      iconUrl: browser.runtime.getURL("notification-logo.svg")
     });
     return {};
   }, { urls: ["<all_urls>"], types: ["xmlhttprequest", "main_frame", "sub_frame"] }, ["blocking", "requestBody"]);
@@ -160,28 +162,34 @@ async function scanDownload(downloadId) {
   if (!download || download.state !== "complete" || !download.filename) return;
   scannedDownloads.add(downloadId);
   try {
-    const result = await scanWithNativeHost(download.filename, true);
+    const sourceUrl = download.url || download.referrer || "";
+    const result = await scanWithNativeHost(download.filename, true, sourceUrl,
+      { source_url: sourceUrl });
     if (!result || result.success === false) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }
     const notification = {
       type: "basic",
-      title: result.infected ? message("threatDetected") : message("downloadClean"),
+      title: result.infected
+        ? (result.quarantined ? message("downloadQuarantined") : message("threatDetected"))
+        : message("downloadClean"),
       message: result.infected
-        ? `${filename(download)}: ${result.message}`
+        ? (result.quarantined
+          ? message("downloadQuarantinedMessage", filename(download))
+          : message("downloadThreatMessage", filename(download)))
         : message("downloadCleanMessage", filename(download))
     };
     let notificationId = `clamav-download-${downloadId}`;
     if (result.infected && result.quarantined) {
       notificationId = `clamav-quarantine-${downloadId}`;
-      notification.message += message("openQuarantine");
     }
     await browser.notifications.create(notificationId, notification);
   } catch (error) {
     await browser.notifications.create(`clamav-download-error-${downloadId}`, {
       type: "basic",
       title: message("downloadScanFailed"),
-      message: `${filename(download)}: ${error.message}`
+      message: message("downloadScanFailedMessage", filename(download)),
+      iconUrl: browser.runtime.getURL("notification-logo.svg")
     });
   }
 }

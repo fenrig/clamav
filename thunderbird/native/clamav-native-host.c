@@ -390,7 +390,8 @@ static char *replace_text(const char *text, const char *needle, const char *repl
     return result;
 }
 
-static struct json_object *scan_file(const char *path, int quarantine, const char *component)
+static struct json_object *scan_file(const char *path, int quarantine, const char *component,
+                                     const char *origin, const char *metadata_json)
 {
     char sha256[65];
     char *output = NULL;
@@ -487,6 +488,8 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         quarantine_metadata.source = path;
         quarantine_metadata.detection = details;
         quarantine_metadata.sha256 = sha256;
+        quarantine_metadata.origin = origin;
+        quarantine_metadata.metadata_json = metadata_json;
         {
             struct stat status;
             if (stat(path, &status) == 0
@@ -555,12 +558,16 @@ int main(void)
     struct json_object *path_object;
     struct json_object *quarantine_object;
     struct json_object *component_object;
+    struct json_object *origin_object;
+    struct json_object *metadata_object;
     struct json_object *command_object;
     struct json_object *response;
     const char *path;
     int quarantine;
     int launched;
     const char *component;
+    const char *origin;
+    const char *metadata_json;
 
     signal(SIGPIPE, SIG_IGN);
     for (;;) {
@@ -601,13 +608,21 @@ int main(void)
             path = json_object_get_string(path_object);
             quarantine = 0;
             component = "unknown";
+            origin = "";
+            metadata_json = "{}";
             if (json_object_object_get_ex(request, "quarantine", &quarantine_object)
                     && json_object_is_type(quarantine_object, json_type_boolean))
                 quarantine = json_object_get_boolean(quarantine_object);
             if (json_object_object_get_ex(request, "component", &component_object)
                     && json_object_is_type(component_object, json_type_string))
                 component = json_object_get_string(component_object);
-            response = scan_file(path, quarantine, component);
+            if (json_object_object_get_ex(request, "origin", &origin_object)
+                    && json_object_is_type(origin_object, json_type_string))
+                origin = json_object_get_string(origin_object);
+            if (json_object_object_get_ex(request, "metadata", &metadata_object)
+                    && json_object_is_type(metadata_object, json_type_object))
+                metadata_json = json_object_to_json_string_ext(metadata_object, JSON_C_TO_STRING_PLAIN);
+            response = scan_file(path, quarantine, component, origin, metadata_json);
         }
         if (request != NULL)
             json_object_put(request);

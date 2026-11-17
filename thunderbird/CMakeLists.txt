@@ -24,7 +24,8 @@ set(CLAMAV_THUNDERBIRD_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.html
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.css
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.js
-    ${CMAKE_CURRENT_SOURCE_DIR}/extension/logo.svg)
+    ${CMAKE_CURRENT_SOURCE_DIR}/extension/logo.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/extension/notification-logo.svg)
 list(APPEND CLAMAV_THUNDERBIRD_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/en/messages.json
     ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/nl/messages.json)
@@ -48,7 +49,7 @@ add_custom_command(
             manifest.json background.js message-display.js message-display.css
             options.html options.css options.js
             _locales/en/messages.json _locales/nl/messages.json
-            logo.svg
+            logo.svg notification-logo.svg
     DEPENDS
         ${CLAMAV_THUNDERBIRD_EXTENSION_FILES}
     WORKING_DIRECTORY
@@ -66,7 +67,8 @@ set(CLAMAV_FIREFOX_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.html
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
-    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/logo.svg)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/logo.svg
+    ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/notification-logo.svg)
 list(APPEND CLAMAV_FIREFOX_EXTENSION_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/en/messages.json
     ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/nl/messages.json)
@@ -75,7 +77,7 @@ add_custom_command(
         ${CLAMAV_FIREFOX_XPI}
     COMMAND
         ${CMAKE_COMMAND} -E tar cf ${CLAMAV_FIREFOX_XPI}
-            --format=zip manifest.json background.js options.html options.css options.js logo.svg
+            --format=zip manifest.json background.js options.html options.css options.js logo.svg notification-logo.svg
             _locales/en/messages.json _locales/nl/messages.json
     DEPENDS
         ${CLAMAV_FIREFOX_EXTENSION_FILES}
@@ -124,6 +126,7 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.css
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/options.js
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/logo.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/extension/notification-logo.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/en/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/extension/_locales/nl/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/README.md
@@ -139,6 +142,7 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.css
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/options.js
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/logo.svg
+        ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/notification-logo.svg
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/en/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/extension/_locales/nl/messages.json
         ${CMAKE_CURRENT_SOURCE_DIR}/../firefox/README.md

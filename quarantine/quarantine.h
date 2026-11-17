@@ -20,6 +20,8 @@ struct clamav_quarantine_metadata {
     const char *source;
     const char *detection;
     const char *sha256;
+    const char *origin;
+    const char *metadata_json;
 };
 
 struct clamav_quarantine_entry {
@@ -34,6 +36,8 @@ struct clamav_quarantine_entry {
     int payload_available;
     int source_available;
     char quarantine_reason[128];
+    char origin[PATH_MAX];
+    char metadata[PATH_MAX];
 };
 
 /* Store a file in the current user's quarantine.

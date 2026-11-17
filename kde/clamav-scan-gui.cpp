@@ -449,6 +449,8 @@ public:
         virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailsPanel_);
         detailQuarantineButton_ = new QPushButton(tr("Quarantine"), detailsPanel_);
         detailDeleteButton_ = new QPushButton(tr("Delete permanently"), detailsPanel_);
+        detailQuarantineAllButton_ = new QPushButton(tr("Quarantine all"), actionBar);
+        detailDeleteAllButton_ = new QPushButton(tr("Delete all"), actionBar);
         lookupButton_->setIcon(QIcon::fromTheme(QStringLiteral("system-search"),
                                                 QIcon::fromTheme(QStringLiteral("search"))));
         virusTotalButton_->setIcon(QIcon::fromTheme(QStringLiteral("applications-internet"),
@@ -457,10 +459,16 @@ public:
                                                            QIcon::fromTheme(QStringLiteral("folder-locked"))));
         detailDeleteButton_->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete"),
                                                        QIcon::fromTheme(QStringLiteral("delete"))));
+        detailQuarantineAllButton_->setIcon(QIcon::fromTheme(QStringLiteral("security-high"),
+                                                              QIcon::fromTheme(QStringLiteral("folder-locked"))));
+        detailDeleteAllButton_->setIcon(QIcon::fromTheme(QStringLiteral("trash-empty"),
+                                                          QIcon::fromTheme(QStringLiteral("edit-delete"))));
         detailActions->addWidget(lookupButton_);
         detailActions->addWidget(virusTotalButton_);
         detailActions->addWidget(detailQuarantineButton_);
         detailActions->addWidget(detailDeleteButton_);
+        detailActions->addWidget(detailQuarantineAllButton_);
+        detailActions->addWidget(detailDeleteAllButton_);
         splitter->addWidget(detailsPanel_);
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
@@ -483,6 +491,10 @@ public:
                 [this] { quarantineSelectedDetection(); });
         connect(detailDeleteButton_, &QPushButton::clicked, this,
                 [this] { deleteSelectedDetection(); });
+        connect(detailQuarantineAllButton_, &QPushButton::clicked, this,
+                [this] { quarantineDetectedFiles(); });
+        connect(detailDeleteAllButton_, &QPushButton::clicked, this,
+                [this] { deleteAllDetections(); });
         connect(detailsToggleButton_, &QPushButton::clicked, this, [this] {
             const bool visible = detailsPanel_->isVisible();
             detailsPanel_->setVisible(!visible);
@@ -861,6 +873,10 @@ private:
         virusTotalButton_->setEnabled(hasEntry);
         detailQuarantineButton_->setEnabled(hasEntry && !entry->handled && !entry->deleted);
         detailDeleteButton_->setEnabled(hasEntry && !entry->deleted);
+        detailQuarantineAllButton_->setEnabled(std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+            [](const DetectionEntry &candidate) { return !candidate.handled && !candidate.deleted; }));
+        detailDeleteAllButton_->setEnabled(std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+            [](const DetectionEntry &candidate) { return !candidate.deleted; }));
         if (!hasEntry) {
             detailEmptyState_->setVisible(true);
             detailContent_->setVisible(false);
@@ -1130,6 +1146,56 @@ private:
             deleteDetection(entry->path, entry->detection);
     }
 
+    bool deleteEntry(DetectionEntry &entry)
+    {
+        bool success = false;
+        if (entry.handled) {
+            if (entry.quarantineId.isEmpty()) {
+                struct clamav_quarantine_entry *entries = nullptr;
+                size_t count = 0;
+                if (clamav_quarantine_list(&entries, &count)) {
+                    for (size_t i = 0; i < count; ++i) {
+                        if (QString::fromLocal8Bit(entries[i].source) == entry.path) {
+                            entry.quarantineId = QString::fromLatin1(entries[i].id);
+                            break;
+                        }
+                    }
+                    clamav_quarantine_list_free(entries);
+                }
+            }
+            success = !entry.quarantineId.isEmpty()
+                && clamav_quarantine_delete(entry.quarantineId.toLatin1().constData());
+        } else {
+            success = QFile::remove(entry.path);
+        }
+        if (success)
+            entry.deleted = true;
+        return success;
+    }
+
+    void deleteAllDetections()
+    {
+        QList<DetectionEntry *> entries;
+        for (auto &entry : detectedFiles_)
+            if (!entry.deleted)
+                entries.append(&entry);
+        if (entries.isEmpty())
+            return;
+        if (QMessageBox::question(this, tr("Delete all detections"),
+                tr("Permanently delete all %1 detected files? This cannot be undone.").arg(entries.size()),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+        int failures = 0;
+        for (DetectionEntry *entry : entries)
+            if (!deleteEntry(*entry))
+                ++failures;
+        refreshDetectionsPanel();
+        updateStatusCard();
+        if (failures > 0)
+            QMessageBox::warning(this, tr("Delete incomplete"),
+                                 tr("%1 detection(s) could not be deleted.").arg(failures));
+    }
+
     void deleteDetection(const QString &path, const QString &detection)
     {
         auto entry = std::find_if(detectedFiles_.begin(), detectedFiles_.end(),
@@ -1146,32 +1212,12 @@ private:
                 != QMessageBox::Yes)
             return;
 
-        bool success = false;
-        if (entry->handled) {
-            if (entry->quarantineId.isEmpty()) {
-                struct clamav_quarantine_entry *entries = nullptr;
-                size_t count = 0;
-                if (clamav_quarantine_list(&entries, &count)) {
-                    for (size_t i = 0; i < count; ++i) {
-                        if (QString::fromLocal8Bit(entries[i].source) == entry->path) {
-                            entry->quarantineId = QString::fromLatin1(entries[i].id);
-                            break;
-                        }
-                    }
-                    clamav_quarantine_list_free(entries);
-                }
-            }
-            success = !entry->quarantineId.isEmpty()
-                && clamav_quarantine_delete(entry->quarantineId.toLatin1().constData());
-        } else {
-            success = QFile::remove(entry->path);
-        }
+        const bool success = deleteEntry(*entry);
         if (!success) {
             QMessageBox::warning(this, tr("Delete infection"),
                                  tr("The infection could not be deleted."));
             return;
         }
-        entry->deleted = true;
         quarantineButton_->setEnabled(!quarantine_ && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                                                    [](const DetectionEntry &candidate) {
                                                        return !candidate.handled && !candidate.deleted;
@@ -1224,6 +1270,8 @@ private:
     QPushButton *detailsToggleButton_ = nullptr;
     QPushButton *detailQuarantineButton_ = nullptr;
     QPushButton *detailDeleteButton_ = nullptr;
+    QPushButton *detailQuarantineAllButton_ = nullptr;
+    QPushButton *detailDeleteAllButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QTextEdit *output_ = nullptr;
     QPushButton *action_ = nullptr;

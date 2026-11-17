@@ -620,6 +620,9 @@ static int delete_entry(const char *id, const char *action)
     const char *source;
     const char *component;
     const char *sha256;
+    const char *retention_detail = action != NULL && strcmp(action, "expire") == 0
+        ? "Automatically removed after the retention period"
+        : NULL;
     if (!entry_paths(id, payload, metadata))
         return 0;
     object = json_object_from_file(metadata);
@@ -649,18 +652,25 @@ static int delete_entry(const char *id, const char *action)
             return 0;
         }
         clamav_quarantine_audit(action, id, component, source,
-                                "original deleted or already absent", 1);
+                                retention_detail != NULL
+                                    ? retention_detail
+                                    : "original deleted or already absent",
+                                1);
         json_object_put(object);
         return 1;
     }
-    json_object_put(object);
     if (unlink(payload) != 0)
+    {
+        json_object_put(object);
         return 0;
+    }
     if (unlink(metadata) != 0) {
         /* Keep the metadata if it cannot be removed; the payload is already
          * gone and will be ignored by the next list operation. */
+        json_object_put(object);
         return 0;
     }
+    clamav_quarantine_audit(action, id, component, source, retention_detail, 1);
     if (valid_hash(sha256)) {
         char blob[PATH_MAX];
         struct stat status;
@@ -668,7 +678,7 @@ static int delete_entry(const char *id, const char *action)
                 && stat(blob, &status) == 0 && status.st_nlink <= 1)
             unlink(blob);
     }
-    clamav_quarantine_audit(action, id, NULL, NULL, NULL, 1);
+    json_object_put(object);
     return 1;
 }
 

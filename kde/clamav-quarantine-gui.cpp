@@ -677,15 +677,19 @@ private:
 
     void updateActionButtons()
     {
-        const int selected = selectedRows().size();
+        const QList<int> rows = selectedRows();
+        const int selected = rows.size();
         bool allPayloadsAvailable = selected > 0;
-        for (const int row : selectedRows())
+        for (const int row : rows) {
+            const auto *item = row >= 0 ? table->item(row, 0) : nullptr;
             allPayloadsAvailable = allPayloadsAvailable
-                && table->item(row, 0)->data(Qt::UserRole + 6).toBool();
+                && item != nullptr && item->data(Qt::UserRole + 6).toBool();
+        }
         restoreButton->setEnabled(allPayloadsAvailable);
         deleteButton->setEnabled(selected > 0);
-        deleteButton->setText(selected == 1
-            && !table->item(table->currentRow(), 0)->data(Qt::UserRole + 6).toBool()
+        const auto *currentItem = table->currentRow() >= 0 ? table->item(table->currentRow(), 0) : nullptr;
+        deleteButton->setText(selected == 1 && currentItem != nullptr
+            && !currentItem->data(Qt::UserRole + 6).toBool()
             ? tr("Delete original") : tr("Delete permanently"));
         lookupButton->setEnabled(selected == 1);
         virusTotalButton->setEnabled(selected == 1 && itemHashIsValid());
@@ -707,7 +711,9 @@ private:
             details->clear();
             return;
         }
-        const int row = table->currentRow();
+        int row = table->currentRow();
+        if (row < 0 || !table->item(row, 0))
+            row = selectedRows().first();
         const auto *item = row >= 0 ? table->item(row, 0) : nullptr;
         if (!item) {
             emptyState->setVisible(true);
@@ -725,7 +731,8 @@ private:
         }
         emptyState->setVisible(false);
         detailContent->setVisible(true);
-        componentLabel->setText(table->item(row, 1)->text());
+        const auto *componentItem = table->item(row, 1);
+        componentLabel->setText(componentItem ? componentItem->text() : tr("Unknown"));
         originalLabel->setText(item->data(Qt::UserRole + 2).toString());
         sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
         hashLabel->setText(item->data(Qt::UserRole + 4).toString());

@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileSystemWatcher>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QDir>
 #include <QHash>
 #include <QFormLayout>
@@ -413,6 +414,10 @@ public:
         scanRemovable->setIcon(QIcon::fromTheme(QStringLiteral("drive-removable-media")));
         connect(scanRemovable, &QPushButton::clicked, this, &ClamavKCM::scanRemovableMedia);
         addButton(actionLayout, scanRemovable);
+        auto *addRemovable = new QPushButton(i18n("Add removable storage"), actions);
+        addRemovable->setIcon(QIcon::fromTheme(QStringLiteral("drive-removable-media")));
+        connect(addRemovable, &QPushButton::clicked, this, &ClamavKCM::addRemovableStorage);
+        addButton(actionLayout, addRemovable);
         auto *refresh = new QPushButton(i18n("Refresh"), actions);
         refresh->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
         connect(refresh, &QPushButton::clicked, this, &ClamavKCM::refreshStatus);
@@ -956,6 +961,16 @@ private:
     {
         startQuarantineScan(removableScanPaths(),
                             i18n("No mounted removable media was found."));
+    }
+    void addRemovableStorage()
+    {
+        const QString path = QFileDialog::getExistingDirectory(
+            widget(), i18n("Select removable storage to scan"), QDir::homePath(),
+            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+        if (path.isEmpty())
+            return;
+        startQuarantineScan(QStringList{path},
+                            i18n("The selected storage location is no longer available."));
     }
     bool runHelper(const QStringList &arguments)
     {

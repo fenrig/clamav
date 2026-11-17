@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFormLayout>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -539,10 +540,16 @@ private:
         if (rows.isEmpty())
             return;
         if (rows.size() == 1) {
-            const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"));
+            const auto *item = table->item(rows.first(), 0);
+            const QString sourcePath = item->data(Qt::UserRole + 3).toString();
+            const QString originalName = QFileInfo(item->data(Qt::UserRole + 2).toString()).fileName();
+            const QString originalDirectory = QFileInfo(sourcePath).absolutePath();
+            const QString initialPath = !originalName.isEmpty() && QDir(originalDirectory).exists()
+                ? QDir(originalDirectory).filePath(originalName) : originalName;
+            const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"), initialPath);
             if (destination.isEmpty())
                 return;
-            const QString id = table->item(rows.first(), 0)->data(Qt::UserRole).toString();
+            const QString id = item->data(Qt::UserRole).toString();
             if (!clamav_quarantine_restore(id.toLatin1().constData(), destination.toLocal8Bit().constData()))
                 QMessageBox::warning(this, tr("Restore failed"), tr("The destination already exists or the quarantined file could not be restored."));
             else

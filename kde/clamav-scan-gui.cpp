@@ -531,9 +531,9 @@ public:
         connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) { scanFinished(code); });
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
-        metricsTimer_.start(500);
+        metricsTimer_.start(30000);
         connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
-        statsTimer_.start(1000);
+        statsTimer_.start(30000);
         updateQueue();
         fileDisplayTimer_.setInterval(150);
         connect(&fileDisplayTimer_, &QTimer::timeout, this, [this] {
@@ -918,8 +918,8 @@ private:
         started_ = std::chrono::steady_clock::now();
         pulseOn_ = false;
         pulseTimer_.start();
-        metricsTimer_.start(500);
-        statsTimer_.start(1000);
+        metricsTimer_.start(30000);
+        statsTimer_.start(30000);
         fileDisplayTimer_.start();
         setTargetEditingEnabled(false);
         updateStatusCard();
@@ -928,6 +928,8 @@ private:
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
         cpuTarget_ = clamdPids().isEmpty() ? tr("Scanner") : tr("ClamAV");
+        updateMetrics();
+        updateQueue();
         writeAudit(QStringLiteral("scan-start"), QString(),
                    QStringLiteral("scanner=%1; targets=%2").arg(scanner_).arg(paths_.size()));
     }

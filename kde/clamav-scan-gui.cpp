@@ -6,6 +6,7 @@
 #include <QFontDatabase>
 #include <QDir>
 #include <QFrame>
+#include <QFormLayout>
 #include <QCloseEvent>
 #include <QCheckBox>
 #include <QGroupBox>
@@ -380,28 +381,70 @@ public:
         detailsPanel_ = new QFrame(splitter);
         detailsPanel_->setFrameShape(QFrame::StyledPanel);
         auto *detailsLayout = new QVBoxLayout(detailsPanel_);
-        detailTitle_ = new QLabel(tr("Select a detection"), detailsPanel_);
-        detailTitle_->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600;"));
-        detailsLayout->addWidget(detailTitle_);
+        detailEmptyState_ = new QLabel(detailsPanel_);
+        detailEmptyState_->setObjectName(QStringLiteral("scanDetailEmptyState"));
+        detailEmptyState_->setTextFormat(Qt::RichText);
+        detailEmptyState_->setAlignment(Qt::AlignCenter);
+        detailEmptyState_->setWordWrap(true);
+        detailEmptyState_->setText(tr("<h2>Nothing selected</h2>"
+                                      "<p>Select an infection to view its severity, source, hash, and handling status.</p>"));
+        detailEmptyState_->setStyleSheet(QStringLiteral(
+            "QLabel#scanDetailEmptyState { font-size: 16px; color: palette(window-text); padding: 32px; }"));
+        detailsLayout->addWidget(detailEmptyState_, 1);
+        detailContent_ = new QWidget(detailsPanel_);
+        auto *detailContentLayout = new QVBoxLayout(detailContent_);
+        detailContentLayout->setContentsMargins(0, 0, 0, 0);
+        detailTitle_ = new QLabel(tr("Detection details"), detailContent_);
+        detailTitle_->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600; padding-bottom: 4px;"));
+        detailContentLayout->addWidget(detailTitle_);
+        auto *detailForm = new QFormLayout;
+        detailDetection_ = new QLabel(detailContent_);
+        detailDetection_->setWordWrap(true);
         detailSeverity_ = new QLabel(detailsPanel_);
         detailSeverity_->setStyleSheet(QStringLiteral("font-weight: 600;"));
-        detailsLayout->addWidget(detailSeverity_);
+        detailForm->addRow(tr("Detection:"), detailDetection_);
+        detailPath_ = new QLabel(detailContent_);
+        detailPath_->setWordWrap(true);
+        detailForm->addRow(tr("Source path:"), detailPath_);
+        detailHash_ = new QLabel(detailContent_);
+        detailHash_->setWordWrap(true);
+        detailHash_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        detailForm->addRow(tr("SHA-256:"), detailHash_);
+        detailForm->addRow(tr("Severity:"), detailSeverity_);
+        detailContentLayout->addLayout(detailForm);
+        auto *summaryCard = new QFrame(detailContent_);
+        summaryCard->setObjectName(QStringLiteral("scanSummaryCard"));
+        auto *summaryLayout = new QVBoxLayout(summaryCard);
+        auto *summaryTitle = new QLabel(tr("What this means"), summaryCard);
+        summaryTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        summaryLayout->addWidget(summaryTitle);
         detailMeter_ = new QProgressBar(detailsPanel_);
         detailMeter_->setRange(0, 4);
         detailMeter_->setTextVisible(false);
         detailMeter_->setFixedHeight(8);
-        detailsLayout->addWidget(detailMeter_);
-        detailPath_ = new QLabel(detailsPanel_);
-        detailPath_->setWordWrap(true);
-        detailsLayout->addWidget(detailPath_);
-        detailHash_ = new QLabel(detailsPanel_);
-        detailHash_->setWordWrap(true);
-        detailsLayout->addWidget(detailHash_);
+        summaryLayout->addWidget(detailMeter_);
+        detailContentLayout->addWidget(summaryCard);
         detailStatus_ = new QLabel(detailsPanel_);
         detailStatus_->setWordWrap(true);
-        detailsLayout->addWidget(detailStatus_);
+        detailContentLayout->addWidget(detailStatus_);
+        detailStatusIcon_ = new QLabel(detailContent_);
+        detailStatusIcon_->setFixedSize(48, 48);
+        detailStatusIcon_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        detailContentLayout->addWidget(detailStatusIcon_);
+        detailContentLayout->addStretch();
+        detailsLayout->addWidget(detailContent_, 1);
+        detailContent_->setVisible(false);
         detailsLayout->addStretch();
-        auto *detailActions = new QVBoxLayout;
+        auto *actionBar = new QFrame(detectionsPanel_);
+        actionBar->setObjectName(QStringLiteral("scanDetailActionBar"));
+        auto *detailActions = new QHBoxLayout(actionBar);
+        detailActions->setContentsMargins(10, 8, 10, 8);
+        auto *actionLabel = new QLabel(tr("Actions for selected detection"), actionBar);
+        actionLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        detailActions->addWidget(actionLabel);
+        detailActions->addStretch();
+        detailsToggleButton_ = new QPushButton(tr("Hide details"), actionBar);
+        detailActions->addWidget(detailsToggleButton_);
         lookupButton_ = new QPushButton(tr("Look up on DuckDuckGo"), detailsPanel_);
         virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailsPanel_);
         detailQuarantineButton_ = new QPushButton(tr("Quarantine"), detailsPanel_);
@@ -418,11 +461,17 @@ public:
         detailActions->addWidget(virusTotalButton_);
         detailActions->addWidget(detailQuarantineButton_);
         detailActions->addWidget(detailDeleteButton_);
-        detailsLayout->addLayout(detailActions);
         splitter->addWidget(detailsPanel_);
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
+        splitter->setCollapsible(1, true);
         panelLayout->addWidget(splitter, 1);
+        panelLayout->addWidget(actionBar);
+        detailsPanel_->setStyleSheet(QStringLiteral(
+            "QFrame#scanSummaryCard { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"
+            "QFrame#scanSummaryCard QLabel { border: none; background: transparent; }"
+            "QFrame#scanDetailActionBar { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"
+            "QFrame#scanDetailActionBar QLabel { border: none; background: transparent; }"));
         tabs_->addTab(detectionsPanel_, tr("Results (0)"));
         connect(detectionsList_, &QListWidget::currentRowChanged, this,
                 [this](int) { updateSelectedDetection(); });
@@ -434,6 +483,11 @@ public:
                 [this] { quarantineSelectedDetection(); });
         connect(detailDeleteButton_, &QPushButton::clicked, this,
                 [this] { deleteSelectedDetection(); });
+        connect(detailsToggleButton_, &QPushButton::clicked, this, [this] {
+            const bool visible = detailsPanel_->isVisible();
+            detailsPanel_->setVisible(!visible);
+            detailsToggleButton_->setText(visible ? tr("Show details") : tr("Hide details"));
+        });
     }
 
 private:
@@ -808,17 +862,22 @@ private:
         detailQuarantineButton_->setEnabled(hasEntry && !entry->handled && !entry->deleted);
         detailDeleteButton_->setEnabled(hasEntry && !entry->deleted);
         if (!hasEntry) {
-            detailTitle_->setText(tr("Select a detection"));
+            detailEmptyState_->setVisible(true);
+            detailContent_->setVisible(false);
+            detailDetection_->clear();
             detailSeverity_->clear();
             detailPath_->clear();
             detailHash_->clear();
             detailStatus_->clear();
+            detailStatusIcon_->clear();
             detailMeter_->setValue(0);
             return;
         }
+        detailEmptyState_->setVisible(false);
+        detailContent_->setVisible(true);
         const int level = detectionLevel(entry->detection);
         const QColor color = detectionLevelColor(level);
-        detailTitle_->setText(entry->detection);
+        detailDetection_->setText(entry->detection);
         detailSeverity_->setText(detectionLevelLabel(level));
         detailSeverity_->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
                                        .arg(color.red()).arg(color.green()).arg(color.blue()));
@@ -832,6 +891,28 @@ private:
                                                       : tr("SHA-256: %1").arg(entry->sha256));
         detailStatus_->setText(entry->deleted ? tr("Status: Deleted")
             : entry->handled ? tr("Status: Quarantined") : tr("Status: Needs attention"));
+        const QStringList statusIconNames = entry->deleted
+            ? QStringList{QStringLiteral("user-trash-full"), QStringLiteral("edit-delete")}
+            : entry->handled
+            ? QStringList{QStringLiteral("emblem-ok"), QStringLiteral("dialog-ok-apply")}
+            : QStringList{QStringLiteral("dialog-warning"), QStringLiteral("dialog-error")};
+        QIcon statusIcon;
+        for (const QString &iconName : statusIconNames) {
+            statusIcon = QIcon::fromTheme(iconName);
+            if (!statusIcon.isNull())
+                break;
+        }
+        detailStatusIcon_->setStyleSheet(QStringLiteral("color: %1;")
+            .arg(entry->deleted || entry->handled ? QStringLiteral("rgb(80, 170, 100)")
+                                                   : QStringLiteral("rgb(210, 55, 65)")));
+        if (!statusIcon.isNull()) {
+            detailStatusIcon_->setText(QString());
+            detailStatusIcon_->setPixmap(statusIcon.pixmap(QSize(40, 40)));
+        } else {
+            detailStatusIcon_->setPixmap(QPixmap());
+            detailStatusIcon_->setText(entry->deleted ? QStringLiteral("×")
+                : entry->handled ? QStringLiteral("✓") : QStringLiteral("!"));
+        }
     }
 
     void lookupSelectedDetection(bool virusTotal)
@@ -1128,14 +1209,19 @@ private:
     QFrame *detectionsPanel_ = nullptr;
     QListWidget *detectionsList_ = nullptr;
     QFrame *detailsPanel_ = nullptr;
+    QLabel *detailEmptyState_ = nullptr;
+    QWidget *detailContent_ = nullptr;
     QLabel *detailTitle_ = nullptr;
+    QLabel *detailDetection_ = nullptr;
     QLabel *detailSeverity_ = nullptr;
     QProgressBar *detailMeter_ = nullptr;
     QLabel *detailPath_ = nullptr;
     QLabel *detailHash_ = nullptr;
     QLabel *detailStatus_ = nullptr;
+    QLabel *detailStatusIcon_ = nullptr;
     QPushButton *lookupButton_ = nullptr;
     QPushButton *virusTotalButton_ = nullptr;
+    QPushButton *detailsToggleButton_ = nullptr;
     QPushButton *detailQuarantineButton_ = nullptr;
     QPushButton *detailDeleteButton_ = nullptr;
     QProgressBar *progress_ = nullptr;

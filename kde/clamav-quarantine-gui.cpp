@@ -149,6 +149,7 @@ public:
         statusHeaderQuarantineIcon->setFixedSize(32, 32);
         statusHeaderQuarantineIcon->setAlignment(Qt::AlignCenter);
         const QStringList quarantineIconNames = {
+            QStringLiteral("clamav-quarantine"), QStringLiteral("clamav"),
             QStringLiteral("folder-locked"), QStringLiteral("security-high"), QStringLiteral("folder")};
         for (const QString &iconName : quarantineIconNames) {
             const QIcon icon = QIcon::fromTheme(iconName);

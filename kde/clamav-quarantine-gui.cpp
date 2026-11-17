@@ -140,6 +140,20 @@ public:
         searchBox->setPlaceholderText(tr("Search detections, filenames, or components…"));
         statusHeader = new QFrame(this);
         statusHeader->setObjectName(QStringLiteral("statusHeader"));
+        statusHeaderQuarantineIcon = new QLabel(statusHeader);
+        statusHeaderQuarantineIcon->setFixedSize(32, 32);
+        statusHeaderQuarantineIcon->setAlignment(Qt::AlignCenter);
+        const QStringList quarantineIconNames = {
+            QStringLiteral("folder-locked"), QStringLiteral("security-high"), QStringLiteral("folder")};
+        for (const QString &iconName : quarantineIconNames) {
+            const QIcon icon = QIcon::fromTheme(iconName);
+            if (!icon.isNull()) {
+                statusHeaderQuarantineIcon->setPixmap(icon.pixmap(28, 28));
+                break;
+            }
+        }
+        if (statusHeaderQuarantineIcon->pixmap(Qt::ReturnByValue).isNull())
+            statusHeaderQuarantineIcon->setText(QStringLiteral("🔒"));
         statusHeaderIcon = new QLabel(statusHeader);
         statusHeaderIcon->setFixedSize(32, 32);
         statusHeaderIcon->setAlignment(Qt::AlignCenter);
@@ -276,6 +290,7 @@ public:
         intro->setStyleSheet(QStringLiteral("color: palette(mid);"));
         auto *statusLayout = new QHBoxLayout(statusHeader);
         statusLayout->setContentsMargins(16, 12, 16, 12);
+        statusLayout->addWidget(statusHeaderQuarantineIcon);
         statusLayout->addWidget(statusHeaderIcon);
         auto *statusText = new QVBoxLayout;
         statusHeaderTitle->setStyleSheet(QStringLiteral("font-size: 16px; font-weight: 600; color: palette(window-text); border: none; background: transparent;"));
@@ -863,6 +878,7 @@ private:
     QTableWidget *table;
     QLineEdit *searchBox;
     QFrame *statusHeader;
+    QLabel *statusHeaderQuarantineIcon;
     QLabel *statusHeaderIcon;
     QLabel *statusHeaderTitle;
     QLabel *statusHeaderDetails;

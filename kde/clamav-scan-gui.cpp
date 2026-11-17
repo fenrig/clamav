@@ -161,18 +161,6 @@ struct ActivityEntry {
     QString detection;
 };
 
-QString formatBytes(double value)
-{
-    const QStringList units = {QStringLiteral("B"), QStringLiteral("KiB"),
-        QStringLiteral("MiB"), QStringLiteral("GiB")};
-    int unit = 0;
-    while (value >= 1024.0 && unit < units.size() - 1) {
-        value /= 1024.0;
-        ++unit;
-    }
-    return QStringLiteral("%1 %2").arg(value, 0, 'f', 1).arg(units.at(unit));
-}
-
 QList<qint64> clamdPids()
 {
     QList<qint64> pids;
@@ -488,7 +476,6 @@ public:
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Waiting for clamd…"), &queueMeter_);
         cpuStatus_ = addCard(cards, tr("CPU"), tr("Waiting for clamd…"), &cpuMeter_);
-        ioStatus_ = addCard(cards, tr("System disk I/O"), tr("Measuring system activity…"), &ioMeter_);
         scanLayout->addLayout(cards);
 
         progress_ = new QProgressBar(this);
@@ -905,13 +892,9 @@ private:
         closeLogged_ = false;
         scanId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
         cpuSample_ = -1;
-        ioSample_ = {-1, -1};
         sampleTime_ = 0.0;
         cpuSeconds_ = 0.0;
         cpuPeak_ = 0.0;
-        ioPeak_ = 0.0;
-        ioTotalRead_ = 0;
-        ioTotalWrite_ = 0;
         infectionDetected_ = false;
         infectionDetected_ = !detectedFiles_.isEmpty();
         currentDetectionKeys_.clear();
@@ -1155,57 +1138,6 @@ private:
             }
         }
         return found ? ticks : -1;
-    }
-
-    QPair<qint64, qint64> processIo() const
-    {
-        qint64 read = 0, write = 0;
-        bool found = false;
-        for (const qint64 pid : pids_) {
-            QFile io(QStringLiteral("/proc/%1/io").arg(pid));
-            if (!io.open(QIODevice::ReadOnly))
-                continue;
-            found = true;
-            while (!io.atEnd()) {
-                const QList<QByteArray> fields = io.readLine().split(':');
-                if (fields.size() != 2)
-                    continue;
-                bool ok = false;
-                const qint64 value = fields.at(1).trimmed().toLongLong(&ok);
-                if (ok && fields.at(0) == "read_bytes") read += value;
-                if (ok && fields.at(0) == "write_bytes") write += value;
-            }
-        }
-        return found ? qMakePair(read, write) : qMakePair<qint64, qint64>(-1, -1);
-    }
-
-    QPair<qint64, qint64> systemIo() const
-    {
-        QFile diskStats(QStringLiteral("/proc/diskstats"));
-        if (!diskStats.open(QIODevice::ReadOnly))
-            return {-1, -1};
-        qint64 readBytes = 0;
-        qint64 writeBytes = 0;
-        while (!diskStats.atEnd()) {
-            const QList<QByteArray> fields = diskStats.readLine().simplified().split(' ');
-            if (fields.size() < 10)
-                continue;
-            const QString device = QString::fromLatin1(fields.at(2));
-            const bool wholeDevice = QRegularExpression(
-                QStringLiteral("^(sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$"))
-                .match(device).hasMatch();
-            if (!wholeDevice)
-                continue;
-            bool readOk = false;
-            bool writeOk = false;
-            const qint64 sectorsRead = fields.at(5).toLongLong(&readOk);
-            const qint64 sectorsWritten = fields.at(9).toLongLong(&writeOk);
-            if (readOk)
-                readBytes += sectorsRead * 512;
-            if (writeOk)
-                writeBytes += sectorsWritten * 512;
-        }
-        return {readBytes, writeBytes};
     }
 
     void readOutput()
@@ -1517,7 +1449,6 @@ private:
         const double elapsed = std::chrono::duration<double>(now - started_).count();
         const double delta = elapsed - sampleTime_;
         const qint64 cpu = processCpuTime();
-        const auto io = systemIo();
         if (cpu >= 0 && cpuSample_ >= 0 && delta > 0) {
             const double ticksPerSecond = std::max(1L, sysconf(_SC_CLK_TCK));
             const double cpuSeconds = std::max(0.0, (cpu - cpuSample_) / ticksPerSecond);
@@ -1527,20 +1458,7 @@ private:
             cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(usage))));
             cpuStatus_->setText(tr("%1% CPU\n%2 active").arg(usage, 0, 'f', 1).arg(cpuTarget_));
         }
-        if (io.first >= 0 && ioSample_.first >= 0 && delta > 0) {
-            const qint64 readDelta = std::max<qint64>(0, io.first - ioSample_.first);
-            const qint64 writeDelta = std::max<qint64>(0, io.second - ioSample_.second);
-            const double rate = (readDelta + writeDelta) / delta;
-            ioTotalRead_ += std::max<qint64>(0, io.first - ioSample_.first);
-            ioTotalWrite_ += std::max<qint64>(0, io.second - ioSample_.second);
-            ioPeak_ = std::max(ioPeak_, rate);
-            const double meterMaximum = std::max(1.0, ioPeak_);
-            ioMeter_->setValue(std::min(100, std::max(0, static_cast<int>(rate / meterMaximum * 100.0))));
-            ioStatus_->setText(tr("read %1/s · write %2/s")
-                .arg(formatBytes(readDelta / delta)).arg(formatBytes(writeDelta / delta)));
-        }
         cpuSample_ = cpu;
-        ioSample_ = io;
         sampleTime_ = elapsed;
     }
 
@@ -1669,11 +1587,7 @@ private:
         cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
             .arg(elapsed > 0 ? cpuSeconds_ / elapsed * 100.0 : 0.0, 0, 'f', 1)
             .arg(cpuPeak_, 0, 'f', 1));
-        ioStatus_->setText(tr("system read %1 · write %2 · peak %3/s")
-            .arg(formatBytes(ioTotalRead_)).arg(formatBytes(ioTotalWrite_)).arg(formatBytes(ioPeak_)));
         cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(cpuPeak_))));
-        ioMeter_->setRange(0, 100);
-        ioMeter_->setValue(ioPeak_ > 0 ? 100 : 0);
         activityList_->scrollToBottom();
     }
 
@@ -1934,10 +1848,8 @@ private:
     QProcess *process_ = nullptr;
     QLabel *queueStatus_ = nullptr;
     QLabel *cpuStatus_ = nullptr;
-    QLabel *ioStatus_ = nullptr;
     QProgressBar *queueMeter_ = nullptr;
     QProgressBar *cpuMeter_ = nullptr;
-    QProgressBar *ioMeter_ = nullptr;
     QLabel *statusIcon_ = nullptr;
     QLabel *heading_ = nullptr;
     QLabel *summary_ = nullptr;
@@ -1994,9 +1906,7 @@ private:
     QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
     qint64 cpuSample_ = -1;
-    QPair<qint64, qint64> ioSample_ = {-1, -1};
-    double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0, ioPeak_ = 0.0;
-    qint64 ioTotalRead_ = 0, ioTotalWrite_ = 0;
+    double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0;
     bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
     bool closeLogged_ = false;
     int resultCode_ = 130;

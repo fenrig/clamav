@@ -1120,9 +1120,20 @@ private:
         warning.setText(QStringLiteral("<span style=\"color:#da4453; font-weight:600;\">%1</span>")
                         .arg(tr("%1 infection(s) are still unhandled.").arg(pending)));
         warning.setInformativeText(tr("Closing this window will leave the infected files in place. Are you sure you want to continue?"));
-        warning.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-        warning.setDefaultButton(QMessageBox::No);
-        return warning.exec() == QMessageBox::Yes;
+        auto *quarantineAndClose = warning.addButton(tr("Quarantine all and close"), QMessageBox::AcceptRole);
+        auto *closeAnyway = warning.addButton(tr("Close anyway"), QMessageBox::DestructiveRole);
+        auto *cancel = warning.addButton(tr("Cancel"), QMessageBox::RejectRole);
+        closeAnyway->setStyleSheet(QStringLiteral("color: #da4453; font-weight: 600;"));
+        warning.setDefaultButton(cancel);
+        warning.exec();
+        if (warning.clickedButton() == quarantineAndClose) {
+            quarantineDetectedFiles();
+            return std::none_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                                [](const DetectionEntry &entry) {
+                                    return !entry.handled && !entry.deleted;
+                                });
+        }
+        return warning.clickedButton() == closeAnyway;
     }
 
     void quarantineDetectedFiles()

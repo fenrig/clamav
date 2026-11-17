@@ -299,9 +299,17 @@ public:
         auto *addPage = new QWidget(tabs);
         auto *addLayout = new QVBoxLayout(addPage);
         addLayout->setContentsMargins(18, 18, 18, 18);
+        auto *addHeader = new QHBoxLayout;
         auto *addTitle = new QLabel(tr("Add files to quarantine"), addPage);
         addTitle->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600;"));
-        addLayout->addWidget(addTitle);
+        addHeader->addWidget(addTitle);
+        addHeader->addStretch();
+        viewQuarantineButton = new QPushButton(tr("View quarantine"), addPage);
+        viewQuarantineButton->setIcon(QIcon::fromTheme(QStringLiteral("view-list-details"),
+                                                        QIcon::fromTheme(QStringLiteral("folder-open"))));
+        viewQuarantineButton->setVisible(false);
+        addHeader->addWidget(viewQuarantineButton);
+        addLayout->addLayout(addHeader);
         auto *addInfoCard = new QFrame(addPage);
         addInfoCard->setObjectName(QStringLiteral("manualInfoCard"));
         auto *addInfoLayout = new QVBoxLayout(addInfoCard);
@@ -360,6 +368,9 @@ public:
         connect(addFromEmptyButton, &QPushButton::clicked, this, [this] {
             tabs_->setCurrentIndex(1);
             chooseManualFiles();
+        });
+        connect(viewQuarantineButton, &QPushButton::clicked, this, [this] {
+            tabs_->setCurrentIndex(0);
         });
         manualRemoveButton->setEnabled(false);
         manualQuarantineButton->setEnabled(false);
@@ -536,6 +547,7 @@ private:
         clamav_quarantine_list_free(entries);
         updateStatusHeader(serious, review, tests, pending);
         addFromEmptyButton->setVisible(count == 0);
+        viewQuarantineButton->setVisible(count > 0);
         table->setSortingEnabled(true);
         table->sortItems(2, Qt::DescendingOrder);
         table->clearSelection();
@@ -829,6 +841,7 @@ private:
     QLabel *statusHeaderDetails;
     QPushButton *addFromEmptyButton;
     QTabWidget *tabs_;
+    QPushButton *viewQuarantineButton;
     QPushButton *refreshButton;
     QPushButton *restoreButton;
     QPushButton *deleteButton;

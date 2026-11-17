@@ -263,7 +263,7 @@ public:
     {
         setWindowTitle(tr("ClamAV virus scan"));
         setWindowIcon(QIcon::fromTheme(QStringLiteral("clamav")));
-        resize(900, 620);
+        resize(1100, 700);
         setMinimumSize(720, 500);
 
         auto *layout = new QVBoxLayout(this);

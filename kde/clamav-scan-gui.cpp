@@ -80,6 +80,37 @@ static QColor detectionLevelColor(int level)
     }
 }
 
+class ScaledIconLabel final : public QLabel
+{
+public:
+    using QLabel::QLabel;
+
+    void setStatusIcon(const QIcon &icon)
+    {
+        icon_ = icon;
+        if (!icon_.isNull())
+            setText(QString());
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        if (icon_.isNull()) {
+            QLabel::paintEvent(event);
+            return;
+        }
+        QPainter painter(this);
+        const int side = std::min(width(), height());
+        const QPixmap pixmap = icon_.pixmap(QSize(side, side));
+        painter.drawPixmap((width() - pixmap.width()) / 2,
+                           (height() - pixmap.height()) / 2, pixmap);
+    }
+
+private:
+    QIcon icon_;
+};
+
 static QString canonicalDetection(QString detection)
 {
     detection = detection.trimmed();
@@ -398,16 +429,21 @@ public:
         detailTitle_->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600; padding-bottom: 4px;"));
         detailContentLayout->addWidget(detailTitle_);
         auto *detailForm = new QFormLayout;
+        detailForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        detailForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
         detailDetection_ = new QLabel(detailContent_);
         detailDetection_->setWordWrap(true);
+        detailDetection_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         detailSeverity_ = new QLabel(detailsPanel_);
         detailSeverity_->setStyleSheet(QStringLiteral("font-weight: 600;"));
         detailForm->addRow(tr("Detection:"), detailDetection_);
         detailPath_ = new QLabel(detailContent_);
         detailPath_->setWordWrap(true);
+        detailPath_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         detailForm->addRow(tr("Source path:"), detailPath_);
         detailHash_ = new QLabel(detailContent_);
         detailHash_->setWordWrap(true);
+        detailHash_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
         detailHash_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         detailForm->addRow(tr("SHA-256:"), detailHash_);
         detailForm->addRow(tr("Severity:"), detailSeverity_);
@@ -427,11 +463,21 @@ public:
         detailStatus_ = new QLabel(detailsPanel_);
         detailStatus_->setWordWrap(true);
         detailContentLayout->addWidget(detailStatus_);
-        detailStatusIcon_ = new QLabel(detailContent_);
-        detailStatusIcon_->setFixedSize(48, 48);
-        detailStatusIcon_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        detailContentLayout->addWidget(detailStatusIcon_);
-        detailContentLayout->addStretch();
+        detailStatusIcon_ = new ScaledIconLabel(detailContent_);
+        detailStatusIcon_->setMinimumSize(48, 48);
+        detailStatusIcon_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        detailStatusIcon_->setAlignment(Qt::AlignCenter);
+        detailContentLayout->addWidget(detailStatusIcon_, 1);
+        auto *lookupActions = new QHBoxLayout;
+        lookupButton_ = new QPushButton(tr("Look up on DuckDuckGo"), detailContent_);
+        virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailContent_);
+        lookupButton_->setIcon(QIcon::fromTheme(QStringLiteral("system-search"),
+                                                QIcon::fromTheme(QStringLiteral("search"))));
+        virusTotalButton_->setIcon(QIcon::fromTheme(QStringLiteral("applications-internet"),
+                                                     QIcon::fromTheme(QStringLiteral("internet-services"))));
+        lookupActions->addWidget(lookupButton_);
+        lookupActions->addWidget(virusTotalButton_);
+        detailContentLayout->addLayout(lookupActions);
         detailsLayout->addWidget(detailContent_, 1);
         detailContent_->setVisible(false);
         detailsLayout->addStretch();
@@ -447,16 +493,10 @@ public:
         detailsToggleButton_ = new QPushButton(tr("Hide details"), actionBar);
         actionHeader->addWidget(detailsToggleButton_);
         detailActions->addLayout(actionHeader);
-        lookupButton_ = new QPushButton(tr("Look up on DuckDuckGo"), detailsPanel_);
-        virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailsPanel_);
         detailQuarantineButton_ = new QPushButton(tr("Quarantine"), detailsPanel_);
         detailDeleteButton_ = new QPushButton(tr("Delete permanently"), detailsPanel_);
         detailQuarantineAllButton_ = new QPushButton(tr("Quarantine all"), actionBar);
         detailDeleteAllButton_ = new QPushButton(tr("Delete all"), actionBar);
-        lookupButton_->setIcon(QIcon::fromTheme(QStringLiteral("system-search"),
-                                                QIcon::fromTheme(QStringLiteral("search"))));
-        virusTotalButton_->setIcon(QIcon::fromTheme(QStringLiteral("applications-internet"),
-                                                     QIcon::fromTheme(QStringLiteral("internet-services"))));
         detailQuarantineButton_->setIcon(QIcon::fromTheme(QStringLiteral("security-high"),
                                                            QIcon::fromTheme(QStringLiteral("folder-locked"))));
         detailDeleteButton_->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete"),
@@ -466,8 +506,6 @@ public:
         detailDeleteAllButton_->setIcon(QIcon::fromTheme(QStringLiteral("trash-empty"),
                                                           QIcon::fromTheme(QStringLiteral("edit-delete"))));
         auto *selectedActions = new QHBoxLayout;
-        selectedActions->addWidget(lookupButton_);
-        selectedActions->addWidget(virusTotalButton_);
         selectedActions->addWidget(detailQuarantineButton_);
         selectedActions->addWidget(detailDeleteButton_);
         detailActions->addLayout(selectedActions);
@@ -895,6 +933,7 @@ private:
             detailPath_->clear();
             detailHash_->clear();
             detailStatus_->clear();
+            detailStatusIcon_->setStatusIcon(QIcon());
             detailStatusIcon_->clear();
             detailMeter_->setValue(0);
             return;
@@ -912,9 +951,8 @@ private:
             "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
             "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
             .arg(color.red()).arg(color.green()).arg(color.blue()));
-        detailPath_->setText(tr("Path: %1").arg(QDir::toNativeSeparators(entry->path)));
-        detailHash_->setText(entry->sha256.isEmpty() ? tr("SHA-256: unavailable")
-                                                      : tr("SHA-256: %1").arg(entry->sha256));
+        detailPath_->setText(QDir::toNativeSeparators(entry->path));
+        detailHash_->setText(entry->sha256.isEmpty() ? tr("Unavailable") : entry->sha256);
         detailStatus_->setText(entry->deleted ? tr("Status: Deleted")
             : entry->handled ? tr("Status: Quarantined") : tr("Status: Needs attention"));
         const QStringList statusIconNames = entry->deleted
@@ -932,10 +970,9 @@ private:
             .arg(entry->deleted || entry->handled ? QStringLiteral("rgb(80, 170, 100)")
                                                    : QStringLiteral("rgb(210, 55, 65)")));
         if (!statusIcon.isNull()) {
-            detailStatusIcon_->setText(QString());
-            detailStatusIcon_->setPixmap(statusIcon.pixmap(QSize(40, 40)));
+            detailStatusIcon_->setStatusIcon(statusIcon);
         } else {
-            detailStatusIcon_->setPixmap(QPixmap());
+            detailStatusIcon_->setStatusIcon(QIcon());
             detailStatusIcon_->setText(entry->deleted ? QStringLiteral("×")
                 : entry->handled ? QStringLiteral("✓") : QStringLiteral("!"));
         }
@@ -1274,7 +1311,7 @@ private:
     QLabel *detailPath_ = nullptr;
     QLabel *detailHash_ = nullptr;
     QLabel *detailStatus_ = nullptr;
-    QLabel *detailStatusIcon_ = nullptr;
+    ScaledIconLabel *detailStatusIcon_ = nullptr;
     QPushButton *lookupButton_ = nullptr;
     QPushButton *virusTotalButton_ = nullptr;
     QPushButton *detailsToggleButton_ = nullptr;

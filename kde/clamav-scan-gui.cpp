@@ -741,6 +741,8 @@ public:
             setLogMonitoring(tabs_->currentWidget() == logPage);
             if (tabs_->currentWidget() == scanPage_)
                 refreshActivityList();
+            if (tabs_->currentWidget() == detectionsPanel_)
+                refreshDetectionsPanel();
         });
         connect(detectionsList_, &QListWidget::currentRowChanged, this,
                 [this](int) { updateSelectedDetection(); });
@@ -932,7 +934,7 @@ private:
         activityDetectionCount_ = 0;
         currentActivityIndex_ = -1;
         updateActivitySummary();
-        refreshDetectionsPanel();
+        refreshDetectionsIfVisible();
         tabs_->setCurrentWidget(scanPage_);
         summary_->setText(tr("Preparing scan…"));
         currentFileLabel_->setText(tr("Current file: preparing…"));
@@ -1262,10 +1264,21 @@ private:
                 }
             }
             if (detectionsChanged) {
-                refreshDetectionsPanel();
+                refreshDetectionsIfVisible();
                 updateStatusCard();
             }
         }
+    }
+
+    bool resultsTabVisible() const
+    {
+        return tabs_ && tabs_->currentWidget() == detectionsPanel_;
+    }
+
+    void refreshDetectionsIfVisible()
+    {
+        if (resultsTabVisible())
+            refreshDetectionsPanel();
     }
 
     void updateQueue()
@@ -1286,8 +1299,8 @@ private:
     {
         if (!detectionsList_)
             return;
-        QString selectedPath;
-        QString selectedDetection;
+        QString selectedPath = selectedDetectionPath_;
+        QString selectedDetection = selectedDetectionName_;
         if (detectionsList_->currentItem()) {
             const int sourceIndex = detectionsList_->currentItem()->data(Qt::UserRole).toInt();
             if (sourceIndex >= 0 && sourceIndex < detectedFiles_.size()) {
@@ -1397,6 +1410,13 @@ private:
     {
         DetectionEntry *entry = selectedDetectionEntry();
         const bool hasEntry = entry != nullptr;
+        if (hasEntry) {
+            selectedDetectionPath_ = entry->path;
+            selectedDetectionName_ = entry->detection;
+        } else {
+            selectedDetectionPath_.clear();
+            selectedDetectionName_.clear();
+        }
         lookupButton_->setEnabled(hasEntry);
         virusTotalButton_->setEnabled(hasEntry);
         detailQuarantineButton_->setEnabled(hasEntry && !entry->handled && !entry->deleted);
@@ -1718,7 +1738,7 @@ private:
             if (quarantineEntry(detected))
                 ++quarantined;
         }
-        refreshDetectionsPanel();
+        refreshDetectionsIfVisible();
         updateStatusCard();
         if (quarantined == pending) {
             quarantineButton_->setEnabled(false);
@@ -1775,7 +1795,7 @@ private:
             QMessageBox::warning(this, tr("ClamAV"), tr("The detected file could not be quarantined."));
             return;
         }
-        refreshDetectionsPanel();
+        refreshDetectionsIfVisible();
         updateStatusCard();
         quarantineButton_->setEnabled(!quarantine_ && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                                                    [](const DetectionEntry &candidate) {
@@ -1838,7 +1858,7 @@ private:
         for (DetectionEntry *entry : entries)
             if (!deleteEntry(*entry))
                 ++failures;
-        refreshDetectionsPanel();
+        refreshDetectionsIfVisible();
         updateStatusCard();
         if (failures > 0)
             QMessageBox::warning(this, tr("Delete incomplete"),
@@ -1871,7 +1891,7 @@ private:
                                                    [](const DetectionEntry &candidate) {
                                                        return !candidate.handled && !candidate.deleted;
                                                    }));
-        refreshDetectionsPanel();
+        refreshDetectionsIfVisible();
         updateStatusCard();
     }
 
@@ -1886,6 +1906,8 @@ private:
     QList<DetectionEntry> detectedFiles_;
     QList<ActivityEntry> activityEntries_;
     int activityDetectionCount_ = 0;
+    QString selectedDetectionPath_;
+    QString selectedDetectionName_;
     QSet<QString> currentDetectionKeys_;
     int currentActivityIndex_ = -1;
     QHash<QString, QString> scanHashes_;

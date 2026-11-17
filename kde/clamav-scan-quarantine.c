@@ -12,7 +12,7 @@ static void scan_one(const char *path)
 {
     printf("SCAN_FILE: %s\n", path);
     fflush(stdout);
-    struct json_object *result = scan_file(path, quarantine_mode, "plasma");
+    struct json_object *result = scan_file(path, quarantine_mode, "plasma", "", "{}");
     struct json_object *value;
     const char *message = "Scan failed";
 

@@ -47,6 +47,9 @@ int clamav_quarantine_store(const char *source_path,
 /* Return the maximum size of one payload accepted by the quarantine store. */
 unsigned long long clamav_quarantine_max_file_size(void);
 
+/* Calculate the SHA-256 used as the shared quarantine blob key. */
+int clamav_quarantine_hash_file(const char *source_path, char output[65]);
+
 /* Record a detection when the payload could not safely be copied locally.
  * The original remains at source_path and can later be deleted explicitly. */
 int clamav_quarantine_record_pending(const char *source_path,

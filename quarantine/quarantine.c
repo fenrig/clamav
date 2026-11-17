@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <openssl/evp.h>
 
 static int make_directory(const char *path)
 {
@@ -24,6 +25,42 @@ static int make_directory(const char *path)
     if (errno != EEXIST || lstat(path, &status) != 0 || !S_ISDIR(status.st_mode))
         return 0;
     return status.st_uid == geteuid();
+}
+
+int clamav_quarantine_hash_file(const char *source_path, char output[65])
+{
+    unsigned char buffer[8192];
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_length = 0;
+    EVP_MD_CTX *context = NULL;
+    int fd;
+    ssize_t count;
+    unsigned int i;
+    int success = 0;
+
+    if (source_path == NULL || output == NULL)
+        return 0;
+    fd = open(source_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0)
+        return 0;
+    context = EVP_MD_CTX_new();
+    if (context == NULL || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1)
+        goto done;
+    while ((count = read(fd, buffer, sizeof(buffer))) > 0) {
+        if (EVP_DigestUpdate(context, buffer, (size_t)count) != 1)
+            goto done;
+    }
+    if (count < 0 || EVP_DigestFinal_ex(context, digest, &digest_length) != 1
+            || digest_length != 32)
+        goto done;
+    for (i = 0; i < digest_length; ++i)
+        snprintf(output + i * 2, 3, "%02x", digest[i]);
+    output[64] = '\0';
+    success = 1;
+done:
+    EVP_MD_CTX_free(context);
+    close(fd);
+    return success;
 }
 
 static int config_path(char path[PATH_MAX])

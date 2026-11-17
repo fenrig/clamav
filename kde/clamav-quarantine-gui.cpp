@@ -3,6 +3,7 @@
 #include "quarantine.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QColor>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -16,6 +17,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -25,6 +27,7 @@
 #include <QFrame>
 #include <QSplitter>
 #include <QTextEdit>
+#include <QTabWidget>
 #include <QUrl>
 #include <QLocale>
 #include <QTranslator>
@@ -247,9 +250,13 @@ public:
         auto *listWidget = new QWidget(splitter);
         auto *listLayout = new QVBoxLayout(listWidget);
         listLayout->setContentsMargins(0, 0, 0, 0);
-        listLayout->addWidget(new QLabel(tr("Quarantined detections"), listWidget));
+        auto *listTitle = new QLabel(tr("Quarantined detections"), listWidget);
+        listTitle->setStyleSheet(QStringLiteral("color: palette(window-text); font-weight: 600;"));
+        listLayout->addWidget(listTitle);
         listToolbar->addWidget(searchBox);
-        listToolbar->addWidget(new QLabel(tr("Filter"), listWidget));
+        auto *filterLabel = new QLabel(tr("Filter"), listWidget);
+        filterLabel->setStyleSheet(QStringLiteral("color: palette(window-text);"));
+        listToolbar->addWidget(filterLabel);
         listLayout->addLayout(listToolbar);
         listLayout->addWidget(table);
         splitter->addWidget(listWidget);
@@ -272,6 +279,7 @@ public:
         statusText->addWidget(statusHeaderDetails);
         statusLayout->addLayout(statusText, 1);
         layout->addWidget(statusHeader);
+        pathLabel->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         layout->addWidget(pathLabel);
         layout->addWidget(splitter, 1);
         toolbar->addWidget(refreshButton);
@@ -282,9 +290,54 @@ public:
         toolbar->addWidget(lookupButton);
         toolbar->addWidget(virusTotalButton);
         layout->addLayout(toolbar);
-        setCentralWidget(central);
+        auto *tabs = new QTabWidget(this);
+        tabs->setTabPosition(QTabWidget::West);
+        tabs->addTab(central, tr("Quarantine"));
+
+        auto *addPage = new QWidget(tabs);
+        auto *addLayout = new QVBoxLayout(addPage);
+        auto *addTitle = new QLabel(tr("Add files to quarantine"), addPage);
+        addTitle->setStyleSheet(QStringLiteral("font-size: 20px; font-weight: 600;"));
+        addLayout->addWidget(addTitle);
+        auto *addDescription = new QLabel(
+            tr("Choose files to copy into the local quarantine. Files are hashed and deduplicated before storage."), addPage);
+        addDescription->setWordWrap(true);
+        addDescription->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        addLayout->addWidget(addDescription);
+        manualFiles = new QListWidget(addPage);
+        manualFiles->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        manualFiles->setAlternatingRowColors(true);
+        addLayout->addWidget(manualFiles, 1);
+        auto *addButtons = new QHBoxLayout;
+        manualChooseButton = new QPushButton(tr("Add files…"), addPage);
+        manualRemoveButton = new QPushButton(tr("Remove selected"), addPage);
+        manualQuarantineButton = new QPushButton(tr("Quarantine selected files"), addPage);
+        manualChooseButton->setIcon(QIcon::fromTheme(QStringLiteral("document-open")));
+        manualRemoveButton->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete")));
+        manualQuarantineButton->setIcon(QIcon::fromTheme(QStringLiteral("security-high")));
+        addButtons->addWidget(manualChooseButton);
+        addButtons->addWidget(manualRemoveButton);
+        addButtons->addStretch();
+        addButtons->addWidget(manualQuarantineButton);
+        addLayout->addLayout(addButtons);
+        manualRemoveOriginals = new QCheckBox(tr("Remove original files after successful quarantine"), addPage);
+        manualRemoveOriginals->setToolTip(tr("Leave this disabled to keep the original files in place."));
+        addLayout->addWidget(manualRemoveOriginals);
+        tabs->addTab(addPage, tr("Add files"));
+        connect(manualChooseButton, &QPushButton::clicked, this, &QuarantineWindow::chooseManualFiles);
+        connect(manualRemoveButton, &QPushButton::clicked, this, [this] {
+            qDeleteAll(manualFiles->selectedItems());
+            manualQuarantineButton->setEnabled(manualFiles->count() > 0);
+        });
+        connect(manualFiles, &QListWidget::itemSelectionChanged, this, [this] {
+            manualRemoveButton->setEnabled(!manualFiles->selectedItems().isEmpty());
+        });
+        connect(manualQuarantineButton, &QPushButton::clicked, this, &QuarantineWindow::quarantineManualFiles);
+        manualRemoveButton->setEnabled(false);
+        manualQuarantineButton->setEnabled(false);
+        setCentralWidget(tabs);
         setWindowTitle(tr("ClamAV Quarantine"));
-        resize(1000, 500);
+        resize(1100, 700);
         setStyleSheet(QStringLiteral(
             "QFrame#summaryCard { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"
             "QFrame#reportCard { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }"
@@ -306,6 +359,65 @@ public:
     }
 
 private:
+    void chooseManualFiles()
+    {
+        const QStringList paths = QFileDialog::getOpenFileNames(this, tr("Choose files to quarantine"));
+        for (const QString &path : paths) {
+            bool alreadyListed = false;
+            for (int row = 0; row < manualFiles->count(); ++row)
+                alreadyListed = alreadyListed || manualFiles->item(row)->text() == path;
+            if (!alreadyListed)
+                manualFiles->addItem(path);
+        }
+        manualQuarantineButton->setEnabled(manualFiles->count() > 0);
+    }
+
+    void quarantineManualFiles()
+    {
+        if (manualFiles->count() == 0)
+            return;
+        if (manualRemoveOriginals->isChecked()
+                && QMessageBox::warning(this, tr("Remove original files"),
+                    tr("The selected originals will be removed after successful quarantine. Continue?"),
+                    QMessageBox::Cancel | QMessageBox::Yes, QMessageBox::Cancel) != QMessageBox::Yes)
+            return;
+        int quarantined = 0;
+        int failures = 0;
+        QList<QListWidgetItem *> completed;
+        for (int row = 0; row < manualFiles->count(); ++row) {
+            auto *item = manualFiles->item(row);
+            const QString path = item->text();
+            char hash[65];
+            if (!clamav_quarantine_hash_file(path.toLocal8Bit().constData(), hash)) {
+                ++failures;
+                continue;
+            }
+            const QByteArray component = "manual";
+            const QByteArray name = QFileInfo(path).fileName().toLocal8Bit();
+            const QByteArray source = path.toLocal8Bit();
+            const QByteArray detection = "Manually quarantined";
+            const clamav_quarantine_metadata metadata{
+                component.constData(), name.constData(), source.constData(),
+                detection.constData(), hash};
+            char id[CLAMAV_QUARANTINE_ID_LENGTH];
+            char payload[PATH_MAX];
+            if (clamav_quarantine_store(source.constData(), &metadata,
+                                        manualRemoveOriginals->isChecked(), id, payload)) {
+                ++quarantined;
+                completed.append(item);
+            } else {
+                ++failures;
+            }
+        }
+        qDeleteAll(completed);
+        refresh();
+        manualQuarantineButton->setEnabled(manualFiles->count() > 0);
+        if (failures > 0)
+            QMessageBox::warning(this, tr("Manual quarantine incomplete"),
+                tr("%1 file(s) were quarantined and %2 file(s) could not be stored.")
+                    .arg(quarantined).arg(failures));
+    }
+
     void refresh()
     {
         char path[PATH_MAX];
@@ -679,6 +791,11 @@ private:
     QPushButton *virusTotalButton;
     QLabel *emptyState;
     QWidget *detailContent;
+    QListWidget *manualFiles;
+    QPushButton *manualChooseButton;
+    QPushButton *manualRemoveButton;
+    QPushButton *manualQuarantineButton;
+    QCheckBox *manualRemoveOriginals;
 };
 
 int main(int argc, char **argv)

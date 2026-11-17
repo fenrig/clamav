@@ -1173,7 +1173,15 @@ private:
         const QByteArray source = detected.path.toLocal8Bit();
         const QByteArray name = QFileInfo(detected.path).fileName().toLocal8Bit();
         const QByteArray detection = detected.detection.toLocal8Bit();
-        const QByteArray sha256 = detected.sha256.toLatin1();
+        QString hash = detected.sha256;
+        if (hash.isEmpty()) {
+            char calculated[65];
+            if (!clamav_quarantine_hash_file(source.constData(), calculated))
+                return false;
+            hash = QString::fromLatin1(calculated);
+            detected.sha256 = hash;
+        }
+        const QByteArray sha256 = hash.toLatin1();
         const QByteArray component = "plasma";
         const clamav_quarantine_metadata metadata{
             component.constData(), name.constData(), source.constData(),

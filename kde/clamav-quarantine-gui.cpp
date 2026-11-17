@@ -33,6 +33,7 @@
 #include <QRegularExpression>
 #include <QFrame>
 #include <QSplitter>
+#include <QSignalBlocker>
 #include <QTextEdit>
 #include <QTabWidget>
 #include <QTimer>
@@ -240,6 +241,7 @@ public:
     QuarantineWindow()
     {
         auto *central = new QWidget(this);
+        quarantinePage_ = central;
         auto *layout = new QVBoxLayout(central);
         auto *toolbar = new QHBoxLayout;
         auto *listToolbar = new QHBoxLayout;
@@ -540,6 +542,18 @@ public:
         });
         connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
             setLogMonitoring(tabs_->currentWidget() == logPage);
+            setQuarantineMonitoring(tabs_->currentWidget() == quarantinePage_);
+        });
+        quarantineWatcher_ = new QFileSystemWatcher(this);
+        connect(quarantineWatcher_, &QFileSystemWatcher::directoryChanged, this, [this] {
+            if (tabs_ && tabs_->currentWidget() == quarantinePage_)
+                refreshInternal(false);
+            setQuarantineWatchPath();
+        });
+        quarantineRefreshTimer_.setInterval(5000);
+        connect(&quarantineRefreshTimer_, &QTimer::timeout, this, [this] {
+            if (tabs_ && tabs_->currentWidget() == quarantinePage_)
+                refreshInternal(false);
         });
         connect(manualChooseButton, &QPushButton::clicked, this, &QuarantineWindow::chooseManualFiles);
         connect(manualRemoveButton, &QPushButton::clicked, this, [this] {
@@ -588,9 +602,41 @@ public:
             updateDetails();
         });
         refresh();
+        setQuarantineMonitoring(true);
     }
 
 private:
+    void setQuarantineWatchPath()
+    {
+        if (!quarantineWatcher_)
+            return;
+        for (const QString &path : quarantineWatcher_->directories())
+            quarantineWatcher_->removePath(path);
+        char path[PATH_MAX];
+        if (!clamav_quarantine_path(path))
+            return;
+        const QString quarantinePath = QString::fromLocal8Bit(path);
+        const QString watchPath = QFileInfo::exists(quarantinePath)
+            ? quarantinePath : QFileInfo(quarantinePath).absolutePath();
+        if (QFileInfo::exists(watchPath))
+            quarantineWatcher_->addPath(watchPath);
+    }
+
+    void setQuarantineMonitoring(bool enabled)
+    {
+        if (!enabled) {
+            quarantineRefreshTimer_.stop();
+            if (quarantineWatcher_) {
+                for (const QString &path : quarantineWatcher_->directories())
+                    quarantineWatcher_->removePath(path);
+            }
+            return;
+        }
+        setQuarantineWatchPath();
+        refreshInternal(false);
+        quarantineRefreshTimer_.start();
+    }
+
     void setLogMonitoring(bool enabled)
     {
         if (!enabled) {
@@ -764,20 +810,32 @@ private:
 
     void refresh()
     {
+        refreshInternal(true);
+    }
+
+    void refreshInternal(bool showErrors)
+    {
         char path[PATH_MAX];
         struct clamav_quarantine_entry *entries = nullptr;
         size_t count = 0;
-        table->setSortingEnabled(false);
-        table->setRowCount(0);
         if (clamav_quarantine_path(path))
             pathLabel->setText(tr("Location: %1").arg(QString::fromLocal8Bit(path)));
         else
             pathLabel->setText(tr("Location unavailable"));
         if (!clamav_quarantine_list(&entries, &count)) {
-            updateStatusHeader(0, 0, 0, 0);
-            QMessageBox::warning(this, tr("Quarantine"), tr("Unable to read the quarantine directory."));
+            if (showErrors) {
+                updateStatusHeader(0, 0, 0, 0);
+                QMessageBox::warning(this, tr("Quarantine"), tr("Unable to read the quarantine directory."));
+            }
             return;
         }
+        QString selectedId;
+        if (table->currentRow() >= 0 && table->item(table->currentRow(), 0))
+            selectedId = table->item(table->currentRow(), 0)->data(Qt::UserRole).toString();
+        const QSignalBlocker signalBlocker(table);
+        table->setUpdatesEnabled(false);
+        table->setSortingEnabled(false);
+        table->setRowCount(0);
         size_t serious = 0;
         size_t review = 0;
         size_t tests = 0;
@@ -850,9 +908,19 @@ private:
         table->setSortingEnabled(true);
         table->sortItems(2, Qt::DescendingOrder);
         table->clearSelection();
+        if (!selectedId.isEmpty()) {
+            for (int row = 0; row < table->rowCount(); ++row) {
+                if (table->item(row, 0)->data(Qt::UserRole).toString() == selectedId) {
+                    table->selectRow(row);
+                    break;
+                }
+            }
+        }
         deleteAllButton->setEnabled(count > 0);
         updateDetails();
         filterRows(searchBox->text());
+        table->setUpdatesEnabled(true);
+        table->viewport()->update();
     }
 
     static QString formatSize(long long size)
@@ -1157,7 +1225,7 @@ private:
     QLabel *statusHeaderTitle;
     QLabel *statusHeaderDetails;
     QPushButton *addFromEmptyButton;
-    QTabWidget *tabs_;
+    QTabWidget *tabs_ = nullptr;
     QPushButton *viewQuarantineButton;
     QPushButton *refreshButton;
     QPushButton *restoreButton;
@@ -1178,6 +1246,7 @@ private:
     QPushButton *virusTotalButton;
     QLabel *emptyState;
     QWidget *detailContent;
+    QWidget *quarantinePage_ = nullptr;
     QListWidget *manualFiles;
     QLabel *manualSummaryLabel;
     QLabel *manualEmptyLabel;
@@ -1192,6 +1261,8 @@ private:
     QTimer logRefreshTimer_;
     QString logPath_;
     bool logNewestFirst_ = true;
+    QFileSystemWatcher *quarantineWatcher_ = nullptr;
+    QTimer quarantineRefreshTimer_;
 };
 
 int main(int argc, char **argv)

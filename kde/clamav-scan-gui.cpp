@@ -612,39 +612,13 @@ private:
             rawOutput_ += incoming;
             for (const QString &sourceLine : rawOutput_.split(QLatin1Char('\n'))) {
                 const QString line = sourceLine.trimmed();
+                if (line.startsWith(QStringLiteral("SCAN_RESULT: ")))
+                    continue;
                 if (line.startsWith(QStringLiteral("Quarantined: "), Qt::CaseInsensitive)) {
                     const QString path = line.mid(QStringLiteral("Quarantined: ").size()).trimmed();
                     for (auto &entry : detectedFiles_)
                         if (entry.path == path)
                             entry.handled = true;
-                }
-                const int foundAt = line.lastIndexOf(QStringLiteral(" FOUND"), -1, Qt::CaseInsensitive);
-                if (foundAt > 0) {
-                    const int separator = line.lastIndexOf(QLatin1Char(':'), foundAt);
-                    QString path;
-                    QString detection;
-                    if (separator > 0 && !line.left(separator).startsWith(QStringLiteral("fd["))) {
-                        path = line.left(separator).trimmed();
-                        detection = line.mid(separator + 1, foundAt - separator - 1).trimmed();
-                    } else if (!currentFile_.isEmpty()) {
-                        path = currentFile_;
-                        detection = line.left(foundAt).trimmed();
-                    }
-                    detection = canonicalDetection(detection);
-                    if (!path.isEmpty() && !detection.isEmpty()) {
-                        const bool known = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
-                            [&path, &detection](const DetectionEntry &entry) {
-                                return entry.path == path
-                                    && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
-                            });
-                        if (!known)
-                            detectedFiles_.append({path, detection, scanHashes_.value(path), {}, false, false});
-                    }
-                }
-                if (line.startsWith(QStringLiteral("A virus was identified."), Qt::CaseInsensitive)
-                        || line.endsWith(QStringLiteral(" FOUND"), Qt::CaseInsensitive)) {
-                    infectionDetected_ = true;
-                    break;
                 }
             }
             refreshDetectionsPanel();

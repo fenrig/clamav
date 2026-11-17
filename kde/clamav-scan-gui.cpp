@@ -32,6 +32,9 @@
 #include <QDialog>
 #include <QDesktopServices>
 #include <QScrollArea>
+#include <QListWidget>
+#include <QSplitter>
+#include <QTabWidget>
 #include <QUrl>
 
 #include "../quarantine/quarantine.h"
@@ -241,23 +244,19 @@ public:
                                                 : tr("Scanning with ClamAV"), this);
         heading->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
         headingRow->addWidget(heading);
-        detectionsToggle_ = new QPushButton(tr("Detections (0)"), this);
-        detectionsToggle_->setCheckable(true);
-        detectionsToggle_->setEnabled(false);
-        connect(detectionsToggle_, &QPushButton::toggled, this, [this](bool open) {
-            detectionsPanel_->setVisible(open);
-            if (panelFoldButton_)
-                panelFoldButton_->setText(open ? tr("Fold") : tr("Unfold"));
-            if (open)
-                detectionsPanel_->raise();
-        });
-        headingRow->addWidget(detectionsToggle_);
         headingRow->addStretch();
         layout->addLayout(headingRow);
 
+        tabs_ = new QTabWidget(this);
+        tabs_->setTabPosition(QTabWidget::West);
+        auto *scanPage = new QWidget(tabs_);
+        auto *scanLayout = new QVBoxLayout(scanPage);
+        tabs_->addTab(scanPage, tr("Scan"));
+        layout->addWidget(tabs_, 1);
+
         summary_ = new QLabel(tr("Preparing scan…"), this);
         summary_->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
-        layout->addWidget(summary_);
+        scanLayout->addWidget(summary_);
         statusCard_ = new QFrame(this);
         statusCard_->setObjectName(QStringLiteral("scanStatusCard"));
         auto *statusLayout = new QHBoxLayout(statusCard_);
@@ -279,7 +278,7 @@ public:
             if (!QProcess::startDetached(QStringLiteral("clamav-quarantine-gui")))
                 QMessageBox::warning(this, tr("ClamAV"), tr("The quarantine manager could not be opened."));
         });
-        layout->addWidget(statusCard_);
+        scanLayout->addWidget(statusCard_);
         pulseTimer_.setInterval(700);
         connect(&pulseTimer_, &QTimer::timeout, this, [this] {
             pulseOn_ = !pulseOn_;
@@ -291,23 +290,23 @@ public:
         targetSummary_->setText(targetDescription());
         targetSummary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
         targetSummary_->setWordWrap(true);
-        layout->addWidget(targetSummary_);
+        scanLayout->addWidget(targetSummary_);
 
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Measuring…"));
         cpuStatus_ = addCard(cards, tr("CPU"), tr("Measuring…"));
         ioStatus_ = addCard(cards, tr("Disk I/O"), tr("Measuring…"));
-        layout->addLayout(cards);
+        scanLayout->addLayout(cards);
 
         progress_ = new QProgressBar(this);
         progress_->setRange(0, 0);
         progress_->setTextVisible(true);
         progress_->setFormat(tr("Scanning…"));
-        layout->addWidget(progress_);
+        scanLayout->addWidget(progress_);
         currentFileLabel_ = new QLabel(tr("Current file: preparing…"), this);
         currentFileLabel_->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         currentFileLabel_->setWordWrap(false);
-        layout->addWidget(currentFileLabel_);
+        scanLayout->addWidget(currentFileLabel_);
         auto *activity = new QGroupBox(tr("Scan activity"), this);
         auto *activityLayout = new QVBoxLayout(activity);
         output_ = new QTextEdit(activity);
@@ -316,7 +315,7 @@ public:
         output_->setPlaceholderText(tr("Threats will appear here if ClamAV detects any."));
         output_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         activityLayout->addWidget(output_);
-        layout->addWidget(activity, 1);
+        scanLayout->addWidget(activity, 1);
 
         auto *buttons = new QHBoxLayout;
         buttons->addStretch();
@@ -336,7 +335,7 @@ public:
         action_ = new QPushButton(tr("Cancel"), this);
         connect(action_, &QPushButton::clicked, this, [this] { cancelOrClose(); });
         buttons->addWidget(action_);
-        layout->addLayout(buttons);
+        scanLayout->addLayout(buttons);
 
         process_ = new QProcess(this);
         connect(process_, &QProcess::readyReadStandardOutput, this, [this] { readOutput(); });
@@ -360,7 +359,7 @@ public:
         });
         fileDisplayTimer_.start();
 
-        detectionsPanel_ = new QFrame(this);
+        detectionsPanel_ = new QFrame(tabs_);
         detectionsPanel_->setObjectName(QStringLiteral("detectionsPanel"));
         detectionsPanel_->setStyleSheet(QStringLiteral(
             "QFrame#detectionsPanel { background: palette(window); border: 1px solid palette(mid); border-radius: 8px; }"));
@@ -370,21 +369,60 @@ public:
         panelTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
         panelHeader->addWidget(panelTitle);
         panelHeader->addStretch();
-        panelFoldButton_ = new QPushButton(tr("Fold"), detectionsPanel_);
-        connect(panelFoldButton_, &QPushButton::clicked, detectionsToggle_, &QPushButton::click);
-        panelHeader->addWidget(panelFoldButton_);
         panelLayout->addLayout(panelHeader);
-        auto *scroll = new QScrollArea(detectionsPanel_);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        auto *rows = new QWidget(scroll);
-        detectionsLayout_ = new QVBoxLayout(rows);
-        detectionsLayout_->setAlignment(Qt::AlignTop);
-        scroll->setWidget(rows);
-        panelLayout->addWidget(scroll, 1);
-        detectionsPanel_->setGeometry(width() * 3 / 5, 0, width() * 2 / 5, height());
-        detectionsPanel_->hide();
-        detectionsPanel_->raise();
+        auto *splitter = new QSplitter(Qt::Horizontal, detectionsPanel_);
+        detectionsList_ = new QListWidget(splitter);
+        detectionsList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        detectionsList_->setFrameShape(QFrame::NoFrame);
+        splitter->addWidget(detectionsList_);
+
+        detailsPanel_ = new QFrame(splitter);
+        detailsPanel_->setFrameShape(QFrame::StyledPanel);
+        auto *detailsLayout = new QVBoxLayout(detailsPanel_);
+        detailTitle_ = new QLabel(tr("Select a detection"), detailsPanel_);
+        detailTitle_->setStyleSheet(QStringLiteral("font-size: 17px; font-weight: 600;"));
+        detailsLayout->addWidget(detailTitle_);
+        detailSeverity_ = new QLabel(detailsPanel_);
+        detailSeverity_->setStyleSheet(QStringLiteral("font-weight: 600;"));
+        detailsLayout->addWidget(detailSeverity_);
+        detailMeter_ = new QProgressBar(detailsPanel_);
+        detailMeter_->setRange(0, 4);
+        detailMeter_->setTextVisible(false);
+        detailMeter_->setFixedHeight(8);
+        detailsLayout->addWidget(detailMeter_);
+        detailPath_ = new QLabel(detailsPanel_);
+        detailPath_->setWordWrap(true);
+        detailsLayout->addWidget(detailPath_);
+        detailHash_ = new QLabel(detailsPanel_);
+        detailHash_->setWordWrap(true);
+        detailsLayout->addWidget(detailHash_);
+        detailStatus_ = new QLabel(detailsPanel_);
+        detailStatus_->setWordWrap(true);
+        detailsLayout->addWidget(detailStatus_);
+        detailsLayout->addStretch();
+        auto *detailActions = new QVBoxLayout;
+        lookupButton_ = new QPushButton(tr("Look up on DuckDuckGo"), detailsPanel_);
+        virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailsPanel_);
+        detailQuarantineButton_ = new QPushButton(tr("Quarantine"), detailsPanel_);
+        detailDeleteButton_ = new QPushButton(tr("Delete permanently"), detailsPanel_);
+        detailActions->addWidget(lookupButton_);
+        detailActions->addWidget(virusTotalButton_);
+        detailActions->addWidget(detailQuarantineButton_);
+        detailActions->addWidget(detailDeleteButton_);
+        detailsLayout->addLayout(detailActions);
+        splitter->addWidget(detailsPanel_);
+        splitter->setStretchFactor(0, 3);
+        splitter->setStretchFactor(1, 2);
+        panelLayout->addWidget(splitter, 1);
+        tabs_->addTab(detectionsPanel_, tr("Results (0)"));
+        connect(detectionsList_, &QListWidget::currentRowChanged, this,
+                [this](int) { updateSelectedDetection(); });
+        connect(lookupButton_, &QPushButton::clicked, this, [this] { lookupSelectedDetection(false); });
+        connect(virusTotalButton_, &QPushButton::clicked, this, [this] { lookupSelectedDetection(true); });
+        connect(detailQuarantineButton_, &QPushButton::clicked, this,
+                [this] { quarantineSelectedDetection(); });
+        connect(detailDeleteButton_, &QPushButton::clicked, this,
+                [this] { deleteSelectedDetection(); });
     }
 
 private:
@@ -641,19 +679,22 @@ private:
 
     void refreshDetectionsPanel()
     {
-        if (!detectionsLayout_)
+        if (!detectionsList_)
             return;
-        while (auto *item = detectionsLayout_->takeAt(0)) {
-            if (item->widget())
-                item->widget()->deleteLater();
-            delete item;
+        QString selectedPath;
+        QString selectedDetection;
+        if (const int row = detectionsList_->currentRow(); row >= 0 && row < detectedFiles_.size()) {
+            selectedPath = detectedFiles_.at(row).path;
+            selectedDetection = detectedFiles_.at(row).detection;
         }
+        detectionsList_->clear();
         for (const auto &detected : detectedFiles_) {
             const int level = detectionLevel(detected.detection);
             const QColor color = detectionLevelColor(level);
-            auto *row = new QFrame;
-            row->setFrameShape(QFrame::StyledPanel);
-            auto *layout = new QVBoxLayout(row);
+            auto *item = new QListWidgetItem(detectionsList_);
+            auto *row = new QFrame(detectionsList_);
+            auto *rowLayout = new QVBoxLayout(row);
+            rowLayout->setContentsMargins(10, 8, 10, 8);
             auto *top = new QHBoxLayout;
             auto *file = new QLabel(QDir::toNativeSeparators(detected.path), row);
             file->setToolTip(detected.path);
@@ -673,10 +714,10 @@ private:
                 deleted->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(80, 170, 100);"));
                 top->addWidget(deleted);
             }
-            layout->addLayout(top);
+            rowLayout->addLayout(top);
             auto *detection = new QLabel(detected.detection, row);
             detection->setWordWrap(true);
-            layout->addWidget(detection);
+            rowLayout->addWidget(detection);
             auto *meter = new QProgressBar(row);
             meter->setRange(0, 4);
             meter->setValue(level);
@@ -686,42 +727,84 @@ private:
                 "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
                 "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
                 .arg(color.red()).arg(color.green()).arg(color.blue()));
-            layout->addWidget(meter);
-            auto *actions = new QHBoxLayout;
-            actions->addStretch();
-            auto *web = new QPushButton(tr("Look up on DuckDuckGo"), row);
-            auto *virusTotal = new QPushButton(tr("Look up on VirusTotal"), row);
-            auto *deleteButton = new QPushButton(tr("Delete permanently"), row);
-            deleteButton->setEnabled(!detected.deleted);
-            const QString query = lookupDetectionName(detected.detection).left(256);
-            const QString sha256 = detected.sha256;
-            connect(web, &QPushButton::clicked, this, [query] {
-                QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+")
-                                               + QString::fromLatin1(QUrl::toPercentEncoding(query))));
-            });
-            connect(virusTotal, &QPushButton::clicked, this, [query, sha256] {
-                const bool validHash = sha256.size() == 64
-                    && QRegularExpression(QStringLiteral("^[0-9a-fA-F]{64}$")).match(sha256).hasMatch();
-                const QString target = validHash
-                    ? QStringLiteral("https://www.virustotal.com/gui/file/") + sha256 + QStringLiteral("/detection")
-                    : QStringLiteral("https://www.virustotal.com/gui/search/")
-                        + QString::fromLatin1(QUrl::toPercentEncoding(query));
-                QDesktopServices::openUrl(QUrl(target));
-            });
-            const QString path = detected.path;
-            const QString detectionName = detected.detection;
-            connect(deleteButton, &QPushButton::clicked, this, [this, path, detectionName] {
-                deleteDetection(path, detectionName);
-            });
-            actions->addWidget(web);
-            actions->addWidget(virusTotal);
-            actions->addWidget(deleteButton);
-            layout->addLayout(actions);
-            detectionsLayout_->addWidget(row);
+            rowLayout->addWidget(meter);
+            item->setSizeHint(row->sizeHint());
+            detectionsList_->setItemWidget(item, row);
         }
+        for (int row = 0; row < detectedFiles_.size(); ++row) {
+            if (detectedFiles_.at(row).path == selectedPath
+                    && detectedFiles_.at(row).detection == selectedDetection) {
+                detectionsList_->setCurrentRow(row);
+                break;
+            }
+        }
+        if (detectionsList_->currentRow() < 0 && detectionsList_->count() > 0)
+            detectionsList_->setCurrentRow(0);
+        updateSelectedDetection();
         const int count = detectedFiles_.size();
-        detectionsToggle_->setText(tr("Detections (%1)").arg(count));
-        detectionsToggle_->setEnabled(count > 0);
+        if (tabs_)
+            tabs_->setTabText(1, tr("Results (%1)").arg(count));
+    }
+
+    DetectionEntry *selectedDetectionEntry()
+    {
+        const int row = detectionsList_ ? detectionsList_->currentRow() : -1;
+        return row >= 0 && row < detectedFiles_.size() ? &detectedFiles_[row] : nullptr;
+    }
+
+    void updateSelectedDetection()
+    {
+        DetectionEntry *entry = selectedDetectionEntry();
+        const bool hasEntry = entry != nullptr;
+        lookupButton_->setEnabled(hasEntry);
+        virusTotalButton_->setEnabled(hasEntry);
+        detailQuarantineButton_->setEnabled(hasEntry && !entry->handled && !entry->deleted);
+        detailDeleteButton_->setEnabled(hasEntry && !entry->deleted);
+        if (!hasEntry) {
+            detailTitle_->setText(tr("Select a detection"));
+            detailSeverity_->clear();
+            detailPath_->clear();
+            detailHash_->clear();
+            detailStatus_->clear();
+            detailMeter_->setValue(0);
+            return;
+        }
+        const int level = detectionLevel(entry->detection);
+        const QColor color = detectionLevelColor(level);
+        detailTitle_->setText(entry->detection);
+        detailSeverity_->setText(detectionLevelLabel(level));
+        detailSeverity_->setStyleSheet(QStringLiteral("font-weight: 600; color: rgb(%1, %2, %3);")
+                                       .arg(color.red()).arg(color.green()).arg(color.blue()));
+        detailMeter_->setValue(level);
+        detailMeter_->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: 0; border-radius: 4px; background: palette(midlight); }"
+            "QProgressBar::chunk { border-radius: 4px; background: rgb(%1, %2, %3); }")
+            .arg(color.red()).arg(color.green()).arg(color.blue()));
+        detailPath_->setText(tr("Path: %1").arg(QDir::toNativeSeparators(entry->path)));
+        detailHash_->setText(entry->sha256.isEmpty() ? tr("SHA-256: unavailable")
+                                                      : tr("SHA-256: %1").arg(entry->sha256));
+        detailStatus_->setText(entry->deleted ? tr("Status: Deleted")
+            : entry->handled ? tr("Status: Quarantined") : tr("Status: Needs attention"));
+    }
+
+    void lookupSelectedDetection(bool virusTotal)
+    {
+        DetectionEntry *entry = selectedDetectionEntry();
+        if (!entry)
+            return;
+        const QString query = lookupDetectionName(entry->detection).left(256);
+        if (!virusTotal) {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://duckduckgo.com/?q=ClamAV+")
+                                           + QString::fromLatin1(QUrl::toPercentEncoding(query))));
+            return;
+        }
+        const bool validHash = entry->sha256.size() == 64
+            && QRegularExpression(QStringLiteral("^[0-9a-fA-F]{64}$")).match(entry->sha256).hasMatch();
+        const QString target = validHash
+            ? QStringLiteral("https://www.virustotal.com/gui/file/") + entry->sha256 + QStringLiteral("/detection")
+            : QStringLiteral("https://www.virustotal.com/gui/search/")
+                + QString::fromLatin1(QUrl::toPercentEncoding(query));
+        QDesktopServices::openUrl(QUrl(target));
     }
 
     void updateMetrics()
@@ -792,8 +875,8 @@ private:
         updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
-        if (exitCode == 1 && infectionDetected_ && !detectedFiles_.isEmpty())
-            detectionsToggle_->setChecked(true);
+        if (exitCode == 1 && infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
+            tabs_->setCurrentWidget(detectionsPanel_);
         const bool canQuarantine = exitCode == 1 && infectionDetected_
             && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                            [](const DetectionEntry &entry) { return !entry.handled; });
@@ -815,13 +898,6 @@ private:
         event->accept();
     }
 
-    void resizeEvent(QResizeEvent *event) override
-    {
-        QDialog::resizeEvent(event);
-        if (detectionsPanel_)
-            detectionsPanel_->setGeometry(width() * 3 / 5, 0, width() * 2 / 5, height());
-    }
-
     void quarantineDetectedFiles()
     {
         if (detectedFiles_.isEmpty()) {
@@ -837,21 +913,8 @@ private:
             if (detected.handled)
                 continue;
             ++pending;
-            const QByteArray source = detected.path.toLocal8Bit();
-            const QByteArray name = QFileInfo(detected.path).fileName().toLocal8Bit();
-            const QByteArray detection = detected.detection.toLocal8Bit();
-            const QByteArray sha256 = detected.sha256.toLatin1();
-            const QByteArray component = "plasma";
-            const clamav_quarantine_metadata metadata{
-                component.constData(), name.constData(), source.constData(),
-                detection.constData(), sha256.constData()};
-            char id[CLAMAV_QUARANTINE_ID_LENGTH];
-            char payload[PATH_MAX];
-            if (clamav_quarantine_store(source.constData(), &metadata, 1, id, payload)) {
+            if (quarantineEntry(detected))
                 ++quarantined;
-                detected.handled = true;
-                detected.quarantineId = QString::fromLatin1(id);
-            }
         }
         refreshDetectionsPanel();
         updateStatusCard();
@@ -865,6 +928,49 @@ private:
                                      tr("%1 of %2 detected files could be quarantined.")
                                          .arg(quarantined).arg(pending));
         }
+    }
+
+    bool quarantineEntry(DetectionEntry &detected)
+    {
+        const QByteArray source = detected.path.toLocal8Bit();
+        const QByteArray name = QFileInfo(detected.path).fileName().toLocal8Bit();
+        const QByteArray detection = detected.detection.toLocal8Bit();
+        const QByteArray sha256 = detected.sha256.toLatin1();
+        const QByteArray component = "plasma";
+        const clamav_quarantine_metadata metadata{
+            component.constData(), name.constData(), source.constData(),
+            detection.constData(), sha256.constData()};
+        char id[CLAMAV_QUARANTINE_ID_LENGTH];
+        char payload[PATH_MAX];
+        if (!clamav_quarantine_store(source.constData(), &metadata, 1, id, payload))
+            return false;
+        detected.handled = true;
+        detected.quarantineId = QString::fromLatin1(id);
+        return true;
+    }
+
+    void quarantineSelectedDetection()
+    {
+        DetectionEntry *entry = selectedDetectionEntry();
+        if (!entry || entry->handled || entry->deleted)
+            return;
+        if (!quarantineEntry(*entry)) {
+            QMessageBox::warning(this, tr("ClamAV"), tr("The detected file could not be quarantined."));
+            return;
+        }
+        refreshDetectionsPanel();
+        updateStatusCard();
+        quarantineButton_->setEnabled(!quarantine_ && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+                                                   [](const DetectionEntry &candidate) {
+                                                       return !candidate.handled && !candidate.deleted;
+                                                   }));
+    }
+
+    void deleteSelectedDetection()
+    {
+        DetectionEntry *entry = selectedDetectionEntry();
+        if (entry)
+            deleteDetection(entry->path, entry->detection);
     }
 
     void deleteDetection(const QString &path, const QString &detection)
@@ -942,10 +1048,20 @@ private:
     QPushButton *openQuarantineButton_ = nullptr;
     QPushButton *quarantineButton_ = nullptr;
     QCheckBox *quarantineCheckBox_ = nullptr;
-    QPushButton *detectionsToggle_ = nullptr;
-    QPushButton *panelFoldButton_ = nullptr;
+    QTabWidget *tabs_ = nullptr;
     QFrame *detectionsPanel_ = nullptr;
-    QVBoxLayout *detectionsLayout_ = nullptr;
+    QListWidget *detectionsList_ = nullptr;
+    QFrame *detailsPanel_ = nullptr;
+    QLabel *detailTitle_ = nullptr;
+    QLabel *detailSeverity_ = nullptr;
+    QProgressBar *detailMeter_ = nullptr;
+    QLabel *detailPath_ = nullptr;
+    QLabel *detailHash_ = nullptr;
+    QLabel *detailStatus_ = nullptr;
+    QPushButton *lookupButton_ = nullptr;
+    QPushButton *virusTotalButton_ = nullptr;
+    QPushButton *detailQuarantineButton_ = nullptr;
+    QPushButton *detailDeleteButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QTextEdit *output_ = nullptr;
     QPushButton *action_ = nullptr;

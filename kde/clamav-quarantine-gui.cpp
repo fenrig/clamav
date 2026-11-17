@@ -1189,6 +1189,9 @@ private:
             return;
         if (rows.size() == 1) {
             const auto *item = table->item(rows.first(), 0);
+            if (!item)
+                return;
+            const QString id = item->data(Qt::UserRole).toString();
             const QString sourcePath = item->data(Qt::UserRole + 3).toString();
             const QString originalName = QFileInfo(item->data(Qt::UserRole + 2).toString()).fileName();
             const QString originalDirectory = QFileInfo(sourcePath).absolutePath();
@@ -1197,21 +1200,27 @@ private:
             const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"), initialPath);
             if (destination.isEmpty())
                 return;
-            startRestoreOperation({{item->data(Qt::UserRole).toString(), destination}}, false);
+            startRestoreOperation({{id, destination}}, false);
             return;
         }
         if (QMessageBox::question(this, tr("Restore multiple files"),
                 tr("Restore %1 quarantined files? Existing destination files will not be overwritten.").arg(rows.size())) != QMessageBox::Yes)
             return;
+        QList<QPair<QString, QString>> selected;
+        for (const int row : rows) {
+            const auto *item = table->item(row, 0);
+            if (item)
+                selected.append({item->data(Qt::UserRole).toString(),
+                                 item->data(Qt::UserRole + 2).toString()});
+        }
+        if (selected.isEmpty())
+            return;
         const QString directory = QFileDialog::getExistingDirectory(this, tr("Choose restore directory"));
         if (directory.isEmpty())
             return;
         QList<RestoreTask> tasks;
-        for (const int row : rows) {
-            const auto *item = table->item(row, 0);
-            const QString id = item->data(Qt::UserRole).toString();
-            const QString name = item->data(Qt::UserRole + 2).toString();
-            tasks.append({id, QDir(directory).filePath(name)});
+        for (const auto &entry : selected) {
+            tasks.append({entry.first, QDir(directory).filePath(entry.second)});
         }
         startRestoreOperation(tasks, true);
     }
@@ -1253,9 +1262,15 @@ private:
         const QList<int> rows = selectedRows();
         if (rows.isEmpty())
             return;
+        QStringList ids;
         bool hasPending = false;
         for (const int row : rows)
-            hasPending = hasPending || !table->item(row, 0)->data(Qt::UserRole + 6).toBool();
+            if (const auto *item = table->item(row, 0)) {
+                ids << item->data(Qt::UserRole).toString();
+                hasPending = hasPending || !item->data(Qt::UserRole + 6).toBool();
+            }
+        if (ids.isEmpty())
+            return;
         const QString prompt = rows.size() == 1
             ? (hasPending ? tr("Delete the original file permanently? This cannot be undone.")
                           : tr("Delete this quarantined file permanently?"))
@@ -1264,8 +1279,7 @@ private:
         if (QMessageBox::question(this, tr("Delete quarantined files"), prompt) != QMessageBox::Yes)
             return;
         int failures = 0;
-        for (const int row : rows) {
-            const QString id = table->item(row, 0)->data(Qt::UserRole).toString();
+        for (const QString &id : ids) {
             if (!clamav_quarantine_delete(id.toLatin1().constData()))
                 ++failures;
         }

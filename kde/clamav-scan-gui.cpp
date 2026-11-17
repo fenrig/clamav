@@ -283,6 +283,7 @@ public:
         tabs_ = new QTabWidget(this);
         tabs_->setTabPosition(QTabWidget::West);
         auto *scanPage = new QWidget(tabs_);
+        scanPage_ = scanPage;
         auto *scanLayout = new QVBoxLayout(scanPage);
 
         summary_ = new QLabel(tr("Preparing scan…"), this);
@@ -357,7 +358,7 @@ public:
         targetButtons->addStretch();
         targetButtons->addWidget(rescanButton_);
         targetsLayout->addLayout(targetButtons);
-        tabs_->addTab(targetsPanel, tr("Locations"));
+        tabs_->insertTab(0, targetsPanel, tr("Locations"));
         targetsPanel_ = targetsPanel;
         connect(addFilesButton_, &QPushButton::clicked, this, [this] {
             const QStringList selected = QFileDialog::getOpenFileNames(this, tr("Choose files to scan"));
@@ -665,7 +666,7 @@ private:
         output_->clear();
         detectionsList_->clear();
         updateSelectedDetection();
-        tabs_->setCurrentWidget(tabs_->widget(0));
+        tabs_->setCurrentWidget(scanPage_);
         summary_->setText(tr("Preparing scan…"));
         currentFileLabel_->setText(tr("Current file: preparing…"));
         progress_->setRange(0, 0);
@@ -1466,6 +1467,7 @@ private:
     QPushButton *quarantineButton_ = nullptr;
     QCheckBox *quarantineCheckBox_ = nullptr;
     QTabWidget *tabs_ = nullptr;
+    QWidget *scanPage_ = nullptr;
     QFrame *targetsPanel_ = nullptr;
     QListWidget *pathsList_ = nullptr;
     QPushButton *addFilesButton_ = nullptr;

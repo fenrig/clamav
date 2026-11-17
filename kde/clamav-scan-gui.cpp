@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QIcon>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLocalSocket>
 #include <QMessageBox>
 #include <QProcess>
@@ -690,9 +691,21 @@ public:
         tabs_->addTab(detectionsPanel_, tr("Results (0)"));
         auto *logPage = new QWidget(tabs_);
         auto *logLayout = new QVBoxLayout(logPage);
+        auto *logHeader = new QHBoxLayout;
         auto *logTitle = new QLabel(tr("Scan log"), logPage);
         logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
-        logLayout->addWidget(logTitle);
+        logHeader->addWidget(logTitle);
+        logHeader->addStretch();
+        logFilter_ = new QLineEdit(logPage);
+        logFilter_->setPlaceholderText(tr("Filter log…"));
+        logFilter_->setClearButtonEnabled(true);
+        logFilter_->setMaximumWidth(280);
+        logHeader->addWidget(logFilter_);
+        logRefreshButton_ = new QPushButton(tr("Oldest first"), logPage);
+        logRefreshButton_->setIcon(QIcon::fromTheme(QStringLiteral("view-sort-ascending"),
+                                                     QIcon::fromTheme(QStringLiteral("sort-ascending"))));
+        logHeader->addWidget(logRefreshButton_);
+        logLayout->addLayout(logHeader);
         logView_ = new QListWidget(logPage);
         logView_->setFrameShape(QFrame::NoFrame);
         logView_->setSelectionMode(QAbstractItemView::NoSelection);
@@ -712,6 +725,12 @@ public:
         });
         logRefreshTimer_.setInterval(5000);
         connect(&logRefreshTimer_, &QTimer::timeout, this, [this] { refreshLog(); });
+        connect(logFilter_, &QLineEdit::textChanged, this, [this] { refreshLog(); });
+        connect(logRefreshButton_, &QPushButton::clicked, this, [this] {
+            logNewestFirst_ = !logNewestFirst_;
+            logRefreshButton_->setText(logNewestFirst_ ? tr("Oldest first") : tr("Newest first"));
+            refreshLog();
+        });
         connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
             setLogMonitoring(tabs_->currentWidget() == logPage);
         });
@@ -784,7 +803,13 @@ private:
             logView_->setItemWidget(item, empty);
             return;
         }
-        const QStringList blocks = text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts);
+        QStringList blocks = text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts);
+        if (!logFilter_->text().trimmed().isEmpty()) {
+            const QString filter = logFilter_->text().trimmed();
+            blocks.erase(std::remove_if(blocks.begin(), blocks.end(), [&filter](const QString &block) {
+                return !block.contains(filter, Qt::CaseInsensitive);
+            }), blocks.end());
+        }
         QHash<QString, QColor> scanColors;
         QHash<QString, QColor> scanFinalColors;
         const QList<QColor> baseColors = {QColor("#3daee9"), QColor("#d9a441"), QColor("#9b59b6")};
@@ -802,6 +827,8 @@ private:
                     ? QColor("#50aa64") : QColor("#da4453"));
             }
         }
+        if (logNewestFirst_)
+            std::reverse(blocks.begin(), blocks.end());
         for (const QString &block : blocks) {
             const QStringList lines = block.split(QLatin1Char('\n'));
             if (lines.isEmpty())
@@ -1927,6 +1954,9 @@ private:
     QProgressBar *progress_ = nullptr;
     QListWidget *activityList_ = nullptr;
     QListWidget *logView_ = nullptr;
+    QLineEdit *logFilter_ = nullptr;
+    QPushButton *logRefreshButton_ = nullptr;
+    bool logNewestFirst_ = true;
     QFileSystemWatcher *logWatcher_ = nullptr;
     QTimer logRefreshTimer_;
     QString logPath_;

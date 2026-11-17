@@ -157,6 +157,8 @@ static QString prettyAuditLog(const QString &path)
             lines << QStringLiteral("  %1: %2").arg(QObject::tr("Source"), record.value(QStringLiteral("source")).toString());
         if (record.contains(QStringLiteral("component")))
             lines << QStringLiteral("  %1: %2").arg(QObject::tr("Component"), record.value(QStringLiteral("component")).toString());
+        if (record.contains(QStringLiteral("id")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("ID"), record.value(QStringLiteral("id")).toString());
         if (record.contains(QStringLiteral("detail")))
             lines << QStringLiteral("  %1: %2").arg(QObject::tr("Details"), record.value(QStringLiteral("detail")).toString());
         lines << QString();
@@ -496,9 +498,21 @@ public:
         tabs->addTab(addPage, tr("Add files"));
         auto *logPage = new QWidget(tabs);
         auto *logLayout = new QVBoxLayout(logPage);
+        auto *logHeader = new QHBoxLayout;
         auto *logTitle = new QLabel(tr("Quarantine log"), logPage);
         logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
-        logLayout->addWidget(logTitle);
+        logHeader->addWidget(logTitle);
+        logHeader->addStretch();
+        logFilter_ = new QLineEdit(logPage);
+        logFilter_->setPlaceholderText(tr("Filter log…"));
+        logFilter_->setClearButtonEnabled(true);
+        logFilter_->setMaximumWidth(280);
+        logHeader->addWidget(logFilter_);
+        logRefreshButton_ = new QPushButton(tr("Oldest first"), logPage);
+        logRefreshButton_->setIcon(QIcon::fromTheme(QStringLiteral("view-sort-ascending"),
+                                                     QIcon::fromTheme(QStringLiteral("sort-ascending"))));
+        logHeader->addWidget(logRefreshButton_);
+        logLayout->addLayout(logHeader);
         logView_ = new QListWidget(logPage);
         logView_->setFrameShape(QFrame::NoFrame);
         logView_->setSelectionMode(QAbstractItemView::NoSelection);
@@ -518,6 +532,12 @@ public:
         });
         logRefreshTimer_.setInterval(5000);
         connect(&logRefreshTimer_, &QTimer::timeout, this, [this] { refreshLog(); });
+        connect(logFilter_, &QLineEdit::textChanged, this, [this] { refreshLog(); });
+        connect(logRefreshButton_, &QPushButton::clicked, this, [this] {
+            logNewestFirst_ = !logNewestFirst_;
+            logRefreshButton_->setText(logNewestFirst_ ? tr("Oldest first") : tr("Newest first"));
+            refreshLog();
+        });
         connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
             setLogMonitoring(tabs_->currentWidget() == logPage);
         });
@@ -605,17 +625,52 @@ private:
             logView_->setItemWidget(item, empty);
             return;
         }
-        for (const QString &block : text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
+        QStringList blocks = text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts);
+        if (!logFilter_->text().trimmed().isEmpty()) {
+            const QString filter = logFilter_->text().trimmed();
+            blocks.erase(std::remove_if(blocks.begin(), blocks.end(), [&filter](const QString &block) {
+                return !block.contains(filter, Qt::CaseInsensitive);
+            }), blocks.end());
+        }
+        QHash<QString, QColor> entryColors;
+        if (logNewestFirst_)
+            std::reverse(blocks.begin(), blocks.end());
+        for (const QString &block : blocks) {
             const QStringList lines = block.split(QLatin1Char('\n'));
             if (lines.isEmpty())
                 continue;
+            QString id;
+            for (const QString &line : lines)
+                if (line.startsWith(QStringLiteral("  ID: ")))
+                    id = line.mid(QStringLiteral("  ID: ").size());
             const bool failed = lines.first().contains(QStringLiteral(" · failed"));
+            QColor color = failed ? QColor("#da4453") : QColor("#da4453");
+            if (!failed) {
+                if (lines.first().contains(QStringLiteral("] restore ")))
+                    color = QColor("#d9a441");
+                else if (lines.first().contains(QStringLiteral("] delete "))
+                             || lines.first().contains(QStringLiteral("] expire ")))
+                    color = QColor("#50aa64");
+            }
+            if (!id.isEmpty())
+                entryColors.insert(id, color);
+        }
+        for (const QString &block : blocks) {
+            const QStringList lines = block.split(QLatin1Char('\n'));
+            if (lines.isEmpty())
+                continue;
+            QString id;
+            for (const QString &line : lines)
+                if (line.startsWith(QStringLiteral("  ID: ")))
+                    id = line.mid(QStringLiteral("  ID: ").size());
+            const bool failed = lines.first().contains(QStringLiteral(" · failed"));
+            QColor color = entryColors.value(id, failed ? QColor("#da4453") : QColor("#3daee9"));
             auto *item = new QListWidgetItem(logView_);
             auto *card = new QFrame(logView_);
             card->setStyleSheet(QStringLiteral(
                 "QFrame { background: palette(alternate-base); border: 1px solid %1; border-left: 5px solid %1; border-radius: 8px; }"
                 "QLabel { border: none; background: transparent; }")
-                .arg(failed ? QStringLiteral("#da4453") : QStringLiteral("#3daee9")));
+                .arg(color.name()));
             auto *layout = new QVBoxLayout(card);
             layout->setContentsMargins(12, 9, 12, 9);
             auto *header = new QLabel(lines.first(), card);
@@ -1131,9 +1186,12 @@ private:
     QPushButton *manualQuarantineButton;
     QCheckBox *manualRemoveOriginals;
     QListWidget *logView_ = nullptr;
+    QLineEdit *logFilter_ = nullptr;
+    QPushButton *logRefreshButton_ = nullptr;
     QFileSystemWatcher *logWatcher_ = nullptr;
     QTimer logRefreshTimer_;
     QString logPath_;
+    bool logNewestFirst_ = true;
 };
 
 int main(int argc, char **argv)

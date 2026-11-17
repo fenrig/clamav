@@ -13,7 +13,7 @@ add_custom_command(OUTPUT ${CLAMAV_KCM_DUTCH_MO}
 add_custom_target(clamav-kcm-dutch-translation ALL DEPENDS ${CLAMAV_KCM_DUTCH_MO})
 
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets DBus)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets DBus Network)
 
 add_executable(clamav-kcm-helper helper.cpp)
 target_link_libraries(clamav-kcm-helper PRIVATE Qt6::Core)
@@ -30,7 +30,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.clamav.kcm.policy
 add_library(kcm_clamav MODULE kcm_clamav.cpp)
 add_dependencies(kcm_clamav clamav-kcm-dutch-translation)
 target_link_libraries(kcm_clamav PRIVATE
-    Qt6::Core Qt6::Widgets Qt6::DBus
+    Qt6::Core Qt6::Widgets Qt6::DBus Qt6::Network
     KF6::ConfigWidgets KF6::I18n KF6::CoreAddons KF6::KCMUtils
     clamav-quarantine)
 target_compile_definitions(kcm_clamav PRIVATE

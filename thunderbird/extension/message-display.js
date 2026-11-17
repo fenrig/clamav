@@ -1,6 +1,7 @@
 /* global messenger */
 
 const BANNER_ID = "clamav-virus-warning";
+let displayedMessageId = null;
 
 function addActionButton(banner, id, text, command, confirmation, busyText) {
   let button = banner.querySelector(`#${id}`);
@@ -10,23 +11,25 @@ function addActionButton(banner, id, text, command, confirmation, busyText) {
   button.type = "button";
   button.textContent = text;
   button.addEventListener("click", async () => {
-    if (!window.confirm(confirmation)) return;
-    button.disabled = true;
-    button.textContent = busyText;
     try {
-      const response = await messenger.runtime.sendMessage({ command });
+      if (!window.confirm(confirmation)) return;
+      button.disabled = true;
+      button.textContent = busyText;
+      const response = await messenger.runtime.sendMessage({ command, messageId: displayedMessageId });
       if (response?.error) throw new Error(response.error);
       if (command === "deleteDisplayedMessage") banner.remove();
     } catch (error) {
       button.disabled = false;
       button.textContent = text;
+      button.title = error.message || "ClamAV could not complete the action";
       console.error(`ClamAV: unable to ${command}`, error);
     }
   });
   return button;
 }
 
-function render(detections) {
+function render(detections, messageId = displayedMessageId) {
+  if (messageId !== null && messageId !== undefined) displayedMessageId = messageId;
   let banner = document.getElementById(BANNER_ID);
   if (!detections || !detections.length) {
     banner?.remove();
@@ -80,31 +83,12 @@ function render(detections) {
   }
   banner.append(button);
 
-  const attachmentDetections = detections.filter(detection =>
-    detection.partName && !detection.partName.startsWith("__clamav-")
-  );
-  if (attachmentDetections.length) {
-    const attachmentButton = addActionButton(
-      banner,
-      "clamav-delete-attachments",
-      attachmentDetections.length === 1 ? "Delete infected attachment" : "Delete infected attachments",
-      "deleteDisplayedAttachments",
-      attachmentDetections.length === 1
-        ? "Permanently remove the infected attachment from this message?"
-        : "Permanently remove the infected attachments from this message?",
-      "Deleting…"
-    );
-    banner.append(attachmentButton);
-  } else {
-    banner.querySelector("#clamav-delete-attachments")?.remove();
-  }
-
   const deleteButton = addActionButton(
     banner,
     "clamav-delete-message",
-    "Delete this mail",
+    "Delete this mail permanently",
     "deleteDisplayedMessage",
-    "Move this mail to the Trash?",
+    "Permanently delete this mail? This cannot be undone and will bypass the Trash.",
     "Deleting…"
   );
   banner.append(deleteButton);
@@ -115,5 +99,5 @@ messenger.runtime.onMessage.addListener(request => {
 });
 
 messenger.runtime.sendMessage({ command: "getDetections" }).then(response => {
-  render(response?.detections || []);
+  render(response?.detections || [], response?.messageId ?? null);
 }).catch(() => {});

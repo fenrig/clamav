@@ -38,7 +38,6 @@
   font-weight: 700;
 }
 
-#clamav-delete-attachments,
 #clamav-delete-message {
   display: block;
   box-sizing: border-box;
@@ -60,7 +59,6 @@
   color: white;
 }
 
-#clamav-delete-attachments:disabled,
 #clamav-delete-message:disabled {
   cursor: wait;
   opacity: 0.7;

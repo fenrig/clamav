@@ -603,48 +603,32 @@ async function updateDisplayedMessage(messageId, current) {
   }
 }
 
-async function displayedMessageId(sender) {
+async function displayedMessageId(sender, expectedMessageId = null) {
   const message = sender.tab
     ? await messenger.messageDisplay.getDisplayedMessage(sender.tab.id)
     : await messenger.messageDisplay.getDisplayedMessage();
   const messageId = Number(message?.id);
   if (!Number.isInteger(messageId)) throw new Error("Thunderbird did not provide a valid message ID");
+  if (expectedMessageId !== null && Number(expectedMessageId) !== messageId)
+    throw new Error("The displayed message changed; please reopen the warning and try again");
   return messageId;
 }
 
-async function deleteDisplayedMessage(sender) {
-  const messageId = await displayedMessageId(sender);
+async function deleteDisplayedMessage(sender, expectedMessageId = null) {
+  const messageId = await displayedMessageId(sender, expectedMessageId);
   try {
-    // This is a user-initiated action, so Thunderbird updates the open mail
-    // view and makes the operation undoable while honoring the account's
-    // normal delete-to-Trash setting.
+    // The boolean form is supported by older Thunderbird versions and
+    // permanently deletes the message when true.
+    await messenger.messages.delete([messageId], true);
+  } catch (error) {
+    // Newer Thunderbird versions also support the options object. Keep the
+    // permanent-delete behavior explicit in the fallback as well.
     await messenger.messages.delete([messageId], {
-      deletePermanently: false,
+      deletePermanently: true,
       isUserAction: true
     });
-  } catch (error) {
-    // The object form was added after the oldest Thunderbird version that
-    // supports this extension. Keep the legacy boolean form as a fallback.
-    if (!/argument|option|isUserAction|deletePermanently/i.test(error.message || "")) throw error;
-    await messenger.messages.delete([messageId], false);
   }
   return messageId;
-}
-
-async function deleteDisplayedAttachments(messageId) {
-  const current = detections.get(messageId) || [];
-  const attachments = await messenger.messages.listAttachments(messageId);
-  const attachmentParts = new Set(attachments.map(attachment => attachment.partName));
-  const partNames = current
-    .map(detection => detection.partName)
-    .filter(partName => attachmentParts.has(partName));
-  if (!partNames.length) throw new Error("No infected attachments were found in this message");
-  await messenger.messages.deleteAttachments(messageId, [...new Set(partNames)]);
-  const remaining = current.filter(detection => !partNames.includes(detection.partName));
-  if (remaining.length) detections.set(messageId, remaining);
-  else detections.delete(messageId);
-  await setMessageSecurityTags(messageId, remaining);
-  await updateDisplayedMessage(messageId, remaining);
 }
 
 async function rescanMessageAttachments(messageId, force = true, quiet = true) {
@@ -754,7 +738,7 @@ async function publishDetection(messageId, result, attachment) {
 messenger.runtime.onMessage.addListener(async (request, sender) => {
   if (request?.command === "deleteDisplayedMessage") {
     try {
-      const messageId = await deleteDisplayedMessage(sender);
+      const messageId = await deleteDisplayedMessage(sender, request.messageId);
       detections.delete(messageId);
       if (sender.tab) {
         await messenger.tabs.sendMessage(sender.tab.id, {
@@ -767,19 +751,6 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       await createNotification({
         type: "basic",
         title: "ClamAV could not delete the message",
-        message: error.message
-      });
-      return { error: error.message };
-    }
-  }
-  if (request?.command === "deleteDisplayedAttachments") {
-    try {
-      await deleteDisplayedAttachments(await displayedMessageId(sender));
-      return { ok: true };
-    } catch (error) {
-      await createNotification({
-        type: "basic",
-        title: "ClamAV could not delete the attachments",
         message: error.message
       });
       return { error: error.message };
@@ -824,7 +795,10 @@ messenger.runtime.onMessage.addListener(async (request, sender) => {
       current = await cachedDetectionsForMessage(message);
       if (current.length) detections.set(message.id, current);
     }
-    return { detections: current.length ? current : detectionsFromTags(message) };
+    return {
+      messageId: message.id,
+      detections: current.length ? current : detectionsFromTags(message)
+    };
   } catch (_) {
     return { detections: [] };
   }

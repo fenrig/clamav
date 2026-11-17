@@ -85,6 +85,10 @@ int clamav_quarantine_audit(const char *action, const char *id,
                             const char *component, const char *source,
                             const char *detail, int success);
 
+/* Append one scan audit record as JSON Lines to the shared per-user scan log. */
+int clamav_scan_audit(const char *action, const char *component,
+                      const char *source, const char *detail, int success);
+
 #ifdef __cplusplus
 }
 #endif

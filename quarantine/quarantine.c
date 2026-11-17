@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/file.h>
 #include <stdint.h>
 #include <time.h>
 #include <unistd.h>
@@ -127,7 +128,7 @@ int clamav_quarantine_set_retention_days(unsigned int days)
     return written == length;
 }
 
-static int state_log_path(char path[PATH_MAX])
+static int state_log_path(char path[PATH_MAX], const char *name)
 {
     const char *state_home = getenv("XDG_STATE_HOME");
     const char *home = getenv("HOME");
@@ -146,14 +147,15 @@ static int state_log_path(char path[PATH_MAX])
     if (!make_directory(base)
             || snprintf(clamav, sizeof(clamav), "%s/clamav", base) >= (int)sizeof(clamav)
             || !make_directory(clamav)
-            || snprintf(path, PATH_MAX, "%s/quarantine.log", clamav) >= PATH_MAX)
+            || name == NULL
+            || snprintf(path, PATH_MAX, "%s/%s", clamav, name) >= PATH_MAX)
         return 0;
     return 1;
 }
 
-int clamav_quarantine_audit(const char *action, const char *id,
-                            const char *component, const char *source,
-                            const char *detail, int success)
+static int audit_log(const char *name, const char *action, const char *id,
+                     const char *component, const char *source,
+                     const char *detail, int success)
 {
     char path[PATH_MAX];
     struct json_object *record;
@@ -162,11 +164,15 @@ int clamav_quarantine_audit(const char *action, const char *id,
     ssize_t written;
     size_t length;
 
-    if (action == NULL || !state_log_path(path))
+    if (action == NULL || !state_log_path(path, name))
         return 0;
     fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0)
         return 0;
+    if (flock(fd, LOCK_EX) != 0) {
+        close(fd);
+        return 0;
+    }
     record = json_object_new_object();
     if (record == NULL) {
         close(fd);
@@ -189,9 +195,23 @@ int clamav_quarantine_audit(const char *action, const char *id,
     if (written == (ssize_t)length)
         written = write(fd, "\n", 1);
     fchmod(fd, 0600);
+    flock(fd, LOCK_UN);
     close(fd);
     json_object_put(record);
     return written == 1;
+}
+
+int clamav_quarantine_audit(const char *action, const char *id,
+                            const char *component, const char *source,
+                            const char *detail, int success)
+{
+    return audit_log("quarantine.log", action, id, component, source, detail, success);
+}
+
+int clamav_scan_audit(const char *action, const char *component,
+                      const char *source, const char *detail, int success)
+{
+    return audit_log("scan.log", action, NULL, component, source, detail, success);
 }
 
 int clamav_quarantine_path(char path[PATH_MAX])

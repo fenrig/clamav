@@ -12,6 +12,7 @@
 #include <QFormLayout>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -34,6 +35,7 @@
 #include <QSplitter>
 #include <QTextEdit>
 #include <QTabWidget>
+#include <QTimer>
 #include <QUrl>
 #include <QStandardPaths>
 #include <QLocale>
@@ -43,6 +45,8 @@
 #include <QWidget>
 
 #include <memory>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 static QString localDescription(const QString &detection)
@@ -106,6 +110,58 @@ static QString formattedMetadata(const QString &serialized)
     QStringList lines;
     appendMetadataLines(document.object(), lines);
     return lines.isEmpty() ? QObject::tr("No metadata recorded.") : lines.join(QLatin1Char('\n'));
+}
+
+static QString auditLogPath(const QString &name)
+{
+    QString state = qEnvironmentVariable("XDG_STATE_HOME");
+    if (state.isEmpty())
+        state = QDir::home().filePath(QStringLiteral(".local/state"));
+    return QDir(state).filePath(QStringLiteral("clamav/%1").arg(name));
+}
+
+static QString prettyAuditLog(const QString &path)
+{
+    const int lockFd = ::open(path.toLocal8Bit().constData(), O_RDONLY | O_CLOEXEC);
+    if (lockFd < 0)
+        return QObject::tr("No log entries yet.");
+    if (flock(lockFd, LOCK_SH) != 0) {
+        ::close(lockFd);
+        return QObject::tr("The log is temporarily unavailable.");
+    }
+    QFile file(path);
+    const QByteArray contents = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    flock(lockFd, LOCK_UN);
+    ::close(lockFd);
+    if (contents.isEmpty())
+        return QObject::tr("No log entries yet.");
+
+    QStringList lines;
+    for (const QByteArray &raw : contents.split('\n')) {
+        if (raw.trimmed().isEmpty())
+            continue;
+        QJsonParseError error;
+        const QJsonDocument document = QJsonDocument::fromJson(raw, &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject())
+            continue;
+        const QJsonObject record = document.object();
+        const QDateTime timestamp = QDateTime::fromSecsSinceEpoch(
+            static_cast<qint64>(record.value(QStringLiteral("time")).toDouble()));
+        const QString action = record.value(QStringLiteral("action")).toString();
+        const bool success = record.value(QStringLiteral("success")).toBool();
+        lines << QStringLiteral("[%1] %2 · %3")
+                     .arg(timestamp.toString(Qt::ISODate).replace(QLatin1Char('T'), QLatin1Char(' ')),
+                          action,
+                          success ? QObject::tr("completed") : QObject::tr("failed"));
+        if (record.contains(QStringLiteral("source")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Source"), record.value(QStringLiteral("source")).toString());
+        if (record.contains(QStringLiteral("component")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Component"), record.value(QStringLiteral("component")).toString());
+        if (record.contains(QStringLiteral("detail")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Details"), record.value(QStringLiteral("detail")).toString());
+        lines << QString();
+    }
+    return lines.isEmpty() ? QObject::tr("No readable log entries yet.") : lines.join(QLatin1Char('\n'));
 }
 
 static int threatLevel(const QString &detection)
@@ -438,6 +494,34 @@ public:
         manualRemoveOriginals->setToolTip(tr("Leave this disabled to keep the original files in place."));
         addLayout->addWidget(manualRemoveOriginals);
         tabs->addTab(addPage, tr("Add files"));
+        auto *logPage = new QWidget(tabs);
+        auto *logLayout = new QVBoxLayout(logPage);
+        auto *logTitle = new QLabel(tr("Quarantine log"), logPage);
+        logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        logLayout->addWidget(logTitle);
+        logView_ = new QTextEdit(logPage);
+        logView_->setReadOnly(true);
+        logView_->setLineWrapMode(QTextEdit::WidgetWidth);
+        logView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        logLayout->addWidget(logView_, 1);
+        tabs->addTab(logPage, tr("Log"));
+        logPath_ = auditLogPath(QStringLiteral("quarantine.log"));
+        logWatcher_ = new QFileSystemWatcher(this);
+        connect(logWatcher_, &QFileSystemWatcher::fileChanged, this, [this] {
+            refreshLog();
+            if (QFileInfo::exists(logPath_) && !logWatcher_->files().contains(logPath_))
+                logWatcher_->addPath(logPath_);
+        });
+        connect(logWatcher_, &QFileSystemWatcher::directoryChanged, this, [this] {
+            refreshLog();
+            if (QFileInfo::exists(logPath_) && !logWatcher_->files().contains(logPath_))
+                logWatcher_->addPath(logPath_);
+        });
+        logRefreshTimer_.setInterval(5000);
+        connect(&logRefreshTimer_, &QTimer::timeout, this, [this] { refreshLog(); });
+        connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
+            setLogMonitoring(tabs_->currentWidget() == logPage);
+        });
         connect(manualChooseButton, &QPushButton::clicked, this, &QuarantineWindow::chooseManualFiles);
         connect(manualRemoveButton, &QPushButton::clicked, this, [this] {
             qDeleteAll(manualFiles->selectedItems());
@@ -488,6 +572,31 @@ public:
     }
 
 private:
+    void setLogMonitoring(bool enabled)
+    {
+        if (!enabled) {
+            logRefreshTimer_.stop();
+            for (const QString &path : logWatcher_->files())
+                logWatcher_->removePath(path);
+            for (const QString &path : logWatcher_->directories())
+                logWatcher_->removePath(path);
+            return;
+        }
+        const QString logDirectory = QFileInfo(logPath_).absolutePath();
+        if (QFileInfo::exists(logDirectory))
+            logWatcher_->addPath(logDirectory);
+        if (QFileInfo::exists(logPath_))
+            logWatcher_->addPath(logPath_);
+        refreshLog();
+        logRefreshTimer_.start();
+    }
+
+    void refreshLog()
+    {
+        if (logView_)
+            logView_->setPlainText(prettyAuditLog(logPath_));
+    }
+
     void updateManualFileUi()
     {
         const int count = manualFiles->count();
@@ -985,6 +1094,10 @@ private:
     QPushButton *manualRemoveButton;
     QPushButton *manualQuarantineButton;
     QCheckBox *manualRemoveOriginals;
+    QTextEdit *logView_ = nullptr;
+    QFileSystemWatcher *logWatcher_ = nullptr;
+    QTimer logRefreshTimer_;
+    QString logPath_;
 };
 
 int main(int argc, char **argv)

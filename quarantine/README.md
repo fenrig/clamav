@@ -23,7 +23,11 @@ disable expiry. Expired payload and metadata pairs are removed by the per-user
 across downtime, and records removals with an `expire` audit action. The timer
 is disabled until enabled by the user or the Quarantine page in the Plasma KCM.
 
-Audit events are appended as JSON Lines to `$XDG_STATE_HOME/clamav/quarantine.log`,
-or `~/.local/state/clamav/quarantine.log`. Each record includes a Unix timestamp,
-action, success flag, quarantine ID when available, component, source, and a
-short detail value. The log is user-owned and mode `0600`; logging is best-effort.
+Quarantine audit events are appended as JSON Lines to
+`$XDG_STATE_HOME/clamav/quarantine.log`, or
+`~/.local/state/clamav/quarantine.log`. Scan UI events use the corresponding
+`scan.log` file in the same directory. Each record includes a Unix timestamp,
+action, success flag, component, source, and a short detail value; quarantine
+records also include an ID when available. Both logs are user-owned, mode
+`0600`, and append-locked so multiple UI processes can write safely. Logging is
+best-effort.

@@ -33,6 +33,7 @@
 #include <QVBoxLayout>
 #include <QDialog>
 #include <QFileDialog>
+#include <QFileSystemWatcher>
 #include <QDesktopServices>
 #include <QScrollArea>
 #include <QListWidget>
@@ -46,7 +47,9 @@
 #include <cmath>
 #include <chrono>
 #include <dirent.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <utility>
 
@@ -213,6 +216,58 @@ QStringList configuredSockets()
         if (!sockets.contains(socket))
             sockets << socket;
     return sockets;
+}
+
+static QString auditLogPath(const QString &name)
+{
+    QString state = qEnvironmentVariable("XDG_STATE_HOME");
+    if (state.isEmpty())
+        state = QDir::home().filePath(QStringLiteral(".local/state"));
+    return QDir(state).filePath(QStringLiteral("clamav/%1").arg(name));
+}
+
+static QString prettyAuditLog(const QString &path)
+{
+    const int lockFd = ::open(path.toLocal8Bit().constData(), O_RDONLY | O_CLOEXEC);
+    if (lockFd < 0)
+        return QObject::tr("No log entries yet.");
+    if (flock(lockFd, LOCK_SH) != 0) {
+        ::close(lockFd);
+        return QObject::tr("The log is temporarily unavailable.");
+    }
+    QFile file(path);
+    const QByteArray contents = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    flock(lockFd, LOCK_UN);
+    ::close(lockFd);
+    if (contents.isEmpty())
+        return QObject::tr("No log entries yet.");
+
+    QStringList lines;
+    for (const QByteArray &raw : contents.split('\n')) {
+        if (raw.trimmed().isEmpty())
+            continue;
+        QJsonParseError error;
+        const QJsonDocument document = QJsonDocument::fromJson(raw, &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject())
+            continue;
+        const QJsonObject record = document.object();
+        const QDateTime timestamp = QDateTime::fromSecsSinceEpoch(
+            static_cast<qint64>(record.value(QStringLiteral("time")).toDouble()));
+        const QString action = record.value(QStringLiteral("action")).toString();
+        const bool success = record.value(QStringLiteral("success")).toBool();
+        lines << QStringLiteral("[%1] %2 · %3")
+                     .arg(timestamp.toString(Qt::ISODate).replace(QLatin1Char('T'), QLatin1Char(' ')),
+                          action,
+                          success ? QObject::tr("completed") : QObject::tr("failed"));
+        if (record.contains(QStringLiteral("source")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Source"), record.value(QStringLiteral("source")).toString());
+        if (record.contains(QStringLiteral("component")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Component"), record.value(QStringLiteral("component")).toString());
+        if (record.contains(QStringLiteral("detail")))
+            lines << QStringLiteral("  %1: %2").arg(QObject::tr("Details"), record.value(QStringLiteral("detail")).toString());
+        lines << QString();
+    }
+    return lines.isEmpty() ? QObject::tr("No readable log entries yet.") : lines.join(QLatin1Char('\n'));
 }
 
 Stats queryStats(QString &socketPath)
@@ -410,7 +465,7 @@ public:
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Waiting for clamd…"), &queueMeter_);
         cpuStatus_ = addCard(cards, tr("CPU"), tr("Waiting for clamd…"), &cpuMeter_);
-        ioStatus_ = addCard(cards, tr("Disk I/O"), tr("Waiting for clamd…"), &ioMeter_);
+        ioStatus_ = addCard(cards, tr("System disk I/O"), tr("Measuring system activity…"), &ioMeter_);
         scanLayout->addLayout(cards);
 
         progress_ = new QProgressBar(this);
@@ -621,6 +676,34 @@ public:
             "QFrame#scanDetailActionBar { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"
             "QFrame#scanDetailActionBar QLabel { border: none; background: transparent; }"));
         tabs_->addTab(detectionsPanel_, tr("Results (0)"));
+        auto *logPage = new QWidget(tabs_);
+        auto *logLayout = new QVBoxLayout(logPage);
+        auto *logTitle = new QLabel(tr("Scan log"), logPage);
+        logTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        logLayout->addWidget(logTitle);
+        logView_ = new QTextEdit(logPage);
+        logView_->setReadOnly(true);
+        logView_->setLineWrapMode(QTextEdit::WidgetWidth);
+        logView_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+        logLayout->addWidget(logView_, 1);
+        tabs_->addTab(logPage, tr("Log"));
+        logPath_ = auditLogPath(QStringLiteral("scan.log"));
+        logWatcher_ = new QFileSystemWatcher(this);
+        connect(logWatcher_, &QFileSystemWatcher::fileChanged, this, [this] {
+            refreshLog();
+            if (QFileInfo::exists(logPath_) && !logWatcher_->files().contains(logPath_))
+                logWatcher_->addPath(logPath_);
+        });
+        connect(logWatcher_, &QFileSystemWatcher::directoryChanged, this, [this] {
+            refreshLog();
+            if (QFileInfo::exists(logPath_) && !logWatcher_->files().contains(logPath_))
+                logWatcher_->addPath(logPath_);
+        });
+        logRefreshTimer_.setInterval(5000);
+        connect(&logRefreshTimer_, &QTimer::timeout, this, [this] { refreshLog(); });
+        connect(tabs_, &QTabWidget::currentChanged, this, [this, logPage](int) {
+            setLogMonitoring(tabs_->currentWidget() == logPage);
+        });
         connect(detectionsList_, &QListWidget::currentRowChanged, this,
                 [this](int) { updateSelectedDetection(); });
         connect(detectionsList_, &QListWidget::itemSelectionChanged, this,
@@ -656,6 +739,42 @@ public:
     }
 
 private:
+    void setLogMonitoring(bool enabled)
+    {
+        if (!enabled) {
+            logRefreshTimer_.stop();
+            for (const QString &path : logWatcher_->files())
+                logWatcher_->removePath(path);
+            for (const QString &path : logWatcher_->directories())
+                logWatcher_->removePath(path);
+            return;
+        }
+        const QString logDirectory = QFileInfo(logPath_).absolutePath();
+        if (QFileInfo::exists(logDirectory))
+            logWatcher_->addPath(logDirectory);
+        if (QFileInfo::exists(logPath_))
+            logWatcher_->addPath(logPath_);
+        refreshLog();
+        logRefreshTimer_.start();
+    }
+
+    void refreshLog()
+    {
+        if (logView_)
+            logView_->setPlainText(prettyAuditLog(logPath_));
+    }
+
+    void writeAudit(const QString &action, const QString &source, const QString &detail,
+                    bool success = true)
+    {
+        const QByteArray actionBytes = action.toUtf8();
+        const QByteArray sourceBytes = source.toUtf8();
+        const QByteArray detailBytes = detail.toUtf8();
+        clamav_scan_audit(actionBytes.constData(), "plasma",
+                          source.isEmpty() ? nullptr : sourceBytes.constData(),
+                          detail.isEmpty() ? nullptr : detailBytes.constData(), success ? 1 : 0);
+    }
+
     void setTargetEditingEnabled(bool enabled)
     {
         for (QWidget *widget : {static_cast<QWidget *>(addFilesButton_),
@@ -675,6 +794,14 @@ private:
         waitingForTargets_ = false;
         cancelled_ = false;
         paused_ = false;
+        cpuSample_ = -1;
+        ioSample_ = {-1, -1};
+        sampleTime_ = 0.0;
+        cpuSeconds_ = 0.0;
+        cpuPeak_ = 0.0;
+        ioPeak_ = 0.0;
+        ioTotalRead_ = 0;
+        ioTotalWrite_ = 0;
         infectionDetected_ = false;
         infectionDetected_ = !detectedFiles_.isEmpty();
         currentDetectionKeys_.clear();
@@ -708,6 +835,8 @@ private:
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
         cpuTarget_ = clamdPids().isEmpty() ? tr("Scanner") : tr("ClamAV");
+        writeAudit(QStringLiteral("scan-start"), QString(),
+                   QStringLiteral("scanner=%1; targets=%2").arg(scanner_).arg(paths_.size()));
     }
 
     void updateStatusCard()
@@ -914,6 +1043,35 @@ private:
         return found ? qMakePair(read, write) : qMakePair<qint64, qint64>(-1, -1);
     }
 
+    QPair<qint64, qint64> systemIo() const
+    {
+        QFile diskStats(QStringLiteral("/proc/diskstats"));
+        if (!diskStats.open(QIODevice::ReadOnly))
+            return {-1, -1};
+        qint64 readBytes = 0;
+        qint64 writeBytes = 0;
+        while (!diskStats.atEnd()) {
+            const QList<QByteArray> fields = diskStats.readLine().simplified().split(' ');
+            if (fields.size() < 10)
+                continue;
+            const QString device = QString::fromLatin1(fields.at(2));
+            const bool wholeDevice = QRegularExpression(
+                QStringLiteral("^(sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$"))
+                .match(device).hasMatch();
+            if (!wholeDevice)
+                continue;
+            bool readOk = false;
+            bool writeOk = false;
+            const qint64 sectorsRead = fields.at(5).toLongLong(&readOk);
+            const qint64 sectorsWritten = fields.at(9).toLongLong(&writeOk);
+            if (readOk)
+                readBytes += sectorsRead * 512;
+            if (writeOk)
+                writeBytes += sectorsWritten * 512;
+        }
+        return {readBytes, writeBytes};
+    }
+
     void readOutput()
     {
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
@@ -972,6 +1130,12 @@ private:
                                     && entry.path == currentFile_
                                     && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
                             });
+                        if (!knownThisScan) {
+                            const int level = detectionLevel(detection);
+                            writeAudit(QStringLiteral("scan-detection"), currentFile_,
+                                       QStringLiteral("severity=%1 (%2); detection=%3")
+                                           .arg(level).arg(detectionLevelLabel(level), detection));
+                        }
                         if (!knownThisScan && !knownUnhandled)
                             detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
                                                    result.value(QStringLiteral("quarantined")).toBool(), false});
@@ -1217,7 +1381,7 @@ private:
         const double elapsed = std::chrono::duration<double>(now - started_).count();
         const double delta = elapsed - sampleTime_;
         const qint64 cpu = processCpuTime();
-        const auto io = processIo();
+        const auto io = systemIo();
         if (cpu >= 0 && cpuSample_ >= 0 && delta > 0) {
             const double ticksPerSecond = std::max(1L, sysconf(_SC_CLK_TCK));
             const double cpuSeconds = std::max(0.0, (cpu - cpuSample_) / ticksPerSecond);
@@ -1246,6 +1410,19 @@ private:
 
     void cancelOrClose()
     {
+        if (!waitingForTargets_ && !finished_) {
+            QMessageBox warning(this);
+            warning.setIcon(QMessageBox::Warning);
+            warning.setWindowTitle(tr("Stop incomplete scan?"));
+            warning.setText(tr("The scan has not finished yet. Stopping it may leave some locations unchecked."));
+            warning.setInformativeText(tr("Are you sure you want to stop the scan?"));
+            QAbstractButton *stopButton = warning.addButton(tr("Stop scan"), QMessageBox::AcceptRole);
+            warning.addButton(tr("Continue scanning"), QMessageBox::RejectRole);
+            warning.setDefaultButton(QMessageBox::Cancel);
+            warning.exec();
+            if (warning.clickedButton() != stopButton)
+                return;
+        }
         if (!confirmCloseWithUnhandledInfections())
             return;
         if (waitingForTargets_) {
@@ -1290,7 +1467,7 @@ private:
             if (::kill(pid, SIGSTOP) != 0)
                 return;
             paused_ = true;
-            pauseButton_->setText(tr("Resume scan"));
+            pauseButton_->setText(tr("Continue scan"));
             pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
             progress_->setFormat(tr("Paused"));
             summary_->setText(tr("Scan paused."));
@@ -1319,6 +1496,10 @@ private:
             : exitCode == 0 ? tr("No threats found.")
             : exitCode == 1 ? tr("Threats were identified.")
                             : tr("The scan could not be completed.");
+        writeAudit(QStringLiteral("scan-finished"), QString(),
+                   QStringLiteral("exit=%1; cancelled=%2; detections=%3")
+                       .arg(exitCode).arg(cancelled_ ? 1 : 0).arg(detectedFiles_.size()),
+                   !cancelled_ && exitCode <= 1);
         statusText_ = tr("Scanner: %1 · Elapsed: %2 s").arg(scanner_).arg(elapsed, 0, 'f', 1);
         if (cancelled_ || exitCode > 1) {
             setStatusIcon(QColor(QStringLiteral("#f39c12")), QChar('!'));
@@ -1347,9 +1528,10 @@ private:
         cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
             .arg(elapsed > 0 ? cpuSeconds_ / elapsed * 100.0 : 0.0, 0, 'f', 1)
             .arg(cpuPeak_, 0, 'f', 1));
-        ioStatus_->setText(tr("read %1 · write %2 · peak %3/s")
+        ioStatus_->setText(tr("system read %1 · write %2 · peak %3/s")
             .arg(formatBytes(ioTotalRead_)).arg(formatBytes(ioTotalWrite_)).arg(formatBytes(ioPeak_)));
         cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(cpuPeak_))));
+        ioMeter_->setRange(0, 100);
         ioMeter_->setValue(ioPeak_ > 0 ? 100 : 0);
         activityList_->scrollToBottom();
     }
@@ -1500,6 +1682,11 @@ private:
                 && clamav_quarantine_delete(entry.quarantineId.toLatin1().constData());
         } else {
             success = QFile::remove(entry.path);
+            writeAudit(QStringLiteral("scan-delete"), entry.path,
+                       QStringLiteral("severity=%1 (%2); detection=%3")
+                           .arg(detectionLevel(entry.detection))
+                           .arg(detectionLevelLabel(detectionLevel(entry.detection)))
+                           .arg(entry.detection), success);
         }
         if (success)
             entry.deleted = true;
@@ -1622,6 +1809,10 @@ private:
     QPushButton *detailDeleteAllButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
     QListWidget *activityList_ = nullptr;
+    QTextEdit *logView_ = nullptr;
+    QFileSystemWatcher *logWatcher_ = nullptr;
+    QTimer logRefreshTimer_;
+    QString logPath_;
     QPushButton *action_ = nullptr;
     QPushButton *pauseButton_ = nullptr;
     QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;

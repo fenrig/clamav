@@ -23,6 +23,7 @@
   "openQuarantine": {"message": " Click this notification to open quarantine."},
   "downloadScanFailed": {"message": "Could not check download"},
   "downloadScanFailedMessage": {"message": "We could not complete the safety check for $filename$.", "placeholders": {"filename": {"content": "$1"}}},
+  "quarantineFailureReason": {"message": "Quarantine was not completed: $reason$", "placeholders": {"reason": {"content": "$1"}}},
   "uploadThreatWarning": {"message": "ClamAV warning: upload may be dangerous"},
   "uploadThreatMessage": {"message": "A threat was found. The upload was paused; review the file before trying again.\n\nFile: $file$", "placeholders": {"file": {"content": "$1"}}},
   "uploadScanIncomplete": {"message": "ClamAV could not inspect an upload"},

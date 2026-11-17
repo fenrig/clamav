@@ -23,6 +23,7 @@
   "openQuarantine": {"message": " Klik op deze melding om de quarantaine te openen."},
   "downloadScanFailed": {"message": "Download kon niet worden gecontroleerd"},
   "downloadScanFailedMessage": {"message": "De veiligheidscontrole voor $filename$ kon niet worden voltooid.", "placeholders": {"filename": {"content": "$1"}}},
+  "quarantineFailureReason": {"message": "Quarantaine is niet voltooid: $reason$", "placeholders": {"reason": {"content": "$1"}}},
   "uploadThreatWarning": {"message": "ClamAV-waarschuwing: upload kan gevaarlijk zijn"},
   "uploadThreatMessage": {"message": "Er is een bedreiging gevonden. De upload is gepauzeerd; controleer het bestand voordat u opnieuw probeert.\n\nBestand: $file$", "placeholders": {"file": {"content": "$1"}}},
   "uploadScanIncomplete": {"message": "ClamAV kon een upload niet controleren"},

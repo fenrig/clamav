@@ -404,6 +404,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     int result;
     int quarantined = 0;
     int quarantine_pending = 0;
+    char quarantine_reason[CLAMAV_QUARANTINE_REASON_LENGTH] = "";
     char quarantine_path[PATH_MAX];
     char quarantine_id[CLAMAV_QUARANTINE_ID_LENGTH];
     struct clamav_quarantine_metadata quarantine_metadata;
@@ -508,29 +509,30 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         quarantine_metadata.origin = origin;
         quarantine_metadata.metadata_json = metadata_json;
         {
-            struct stat status;
-            if (stat(path, &status) == 0
-                    && status.st_size >= 0
-                    && (unsigned long long)status.st_size > clamav_quarantine_max_file_size()) {
+            if (!clamav_quarantine_preflight(path, sha256, 1, quarantine_reason)) {
                 quarantine_pending = clamav_quarantine_record_pending(
                     path, &quarantine_metadata,
-                    "File exceeds the local quarantine size limit", quarantine_id);
+                    quarantine_reason, quarantine_id);
                 size_t old_length = strlen(message);
-                const char *notice = quarantine_pending
-                    ? "\n\nQuarantine skipped: file is larger than the quarantine limit; it remains at the original path"
-                    : "\n\nQuarantine skipped: file is larger than the quarantine limit";
-                char *expanded = (char *)realloc(message, old_length + strlen(notice) + 1);
+                const size_t notice_length = strlen("\n\nQuarantine skipped: ")
+                    + strlen(quarantine_reason) + strlen(quarantine_pending
+                        ? "; it remains at the original path" : "") + 1;
+                char *expanded = (char *)realloc(message, old_length + notice_length);
                 if (expanded != NULL) {
                     message = expanded;
-                    sprintf(message + old_length, "%s", notice);
+                    sprintf(message + old_length, "\n\nQuarantine skipped: %s%s", quarantine_reason,
+                            quarantine_pending ? "; it remains at the original path" : "");
                 }
             } else {
                 quarantined = clamav_quarantine_store(path, &quarantine_metadata, 1,
                                                       quarantine_id, quarantine_path);
-                if (!quarantined)
+                if (!quarantined) {
+                    snprintf(quarantine_reason, sizeof(quarantine_reason),
+                             "%s", "The local quarantine copy could not be completed.");
                     quarantine_pending = clamav_quarantine_record_pending(
                         path, &quarantine_metadata,
-                        "The local quarantine copy could not be completed", quarantine_id);
+                        quarantine_reason, quarantine_id);
+                }
             }
         }
         if (quarantined) {
@@ -558,6 +560,8 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         json_object_object_add(response, "quarantined", json_object_new_boolean(quarantined));
     if (quarantine && result == 1)
         json_object_object_add(response, "quarantine_pending", json_object_new_boolean(quarantine_pending));
+    if (quarantine && result == 1 && !quarantined && quarantine_reason[0] != '\0')
+        json_object_object_add(response, "quarantine_reason", json_object_new_string(quarantine_reason));
     if (quarantined)
         json_object_object_add(response, "quarantine_path", json_object_new_string(quarantine_path));
     free(message);

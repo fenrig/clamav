@@ -171,6 +171,7 @@ struct QuarantineTaskResult {
     bool success;
     QString sha256;
     QString quarantineId;
+    QString failureReason;
 };
 
 struct ActivityEntry {
@@ -1829,7 +1830,8 @@ private:
                 if (hash.isEmpty()) {
                     char calculated[65];
                     if (!clamav_quarantine_hash_file(source.constData(), calculated)) {
-                        results->append({task.index, false, {}, {}});
+                        results->append({task.index, false, {}, {},
+                                         QObject::tr("The file could not be read to calculate its hash.")});
                         continue;
                     }
                     hash = QString::fromLatin1(calculated);
@@ -1841,15 +1843,22 @@ private:
                     detection.constData(), sha256.constData()};
                 char id[CLAMAV_QUARANTINE_ID_LENGTH];
                 char payload[PATH_MAX];
+                char reason[CLAMAV_QUARANTINE_REASON_LENGTH];
+                if (!clamav_quarantine_preflight(source.constData(), sha256.constData(), 1, reason)) {
+                    results->append({task.index, false, hash, {}, QString::fromLocal8Bit(reason)});
+                    continue;
+                }
                 const bool success = clamav_quarantine_store(source.constData(), &metadata, 1, id, payload);
                 results->append({task.index, success, hash,
-                                 success ? QString::fromLatin1(id) : QString()});
+                                 success ? QString::fromLatin1(id) : QString(),
+                                 success ? QString() : QObject::tr("The quarantine copy could not be completed.")});
             }
         });
         connect(worker, &QThread::finished, this, [this, worker, results, tasks] {
             worker->deleteLater();
             operationBusy_ = false;
             int quarantined = 0;
+            QStringList failures;
             for (const QuarantineTaskResult &result : *results) {
                 if (result.index < 0 || result.index >= detectedFiles_.size())
                     continue;
@@ -1863,8 +1872,12 @@ private:
                     entry.handled = true;
                     entry.quarantineId = result.quarantineId;
                     ++quarantined;
+                } else if (!result.failureReason.isEmpty()) {
+                    failures << QStringLiteral("%1: %2").arg(entry.path, result.failureReason);
                 }
-                writeAudit(QStringLiteral("scan-quarantine"), entry.path, detail, result.success);
+                writeAudit(QStringLiteral("scan-quarantine"), entry.path,
+                           result.success ? detail : detail + QStringLiteral("; reason=") + result.failureReason,
+                           result.success);
             }
             quarantineButton_->setEnabled(!quarantine_ && quarantined < tasks.size());
             quarantineCheckBox_->setEnabled(quarantined < tasks.size());
@@ -1874,8 +1887,8 @@ private:
                 statusCardDetails_->setText(tr("Detected files were moved to quarantine."));
             else
                 QMessageBox::warning(this, tr("ClamAV"),
-                                     tr("%1 of %2 detected files could be quarantined.")
-                                         .arg(quarantined).arg(tasks.size()));
+                                     tr("%1 of %2 detected files could be quarantined.\n\n%3")
+                                         .arg(quarantined).arg(tasks.size()).arg(failures.join(QStringLiteral("\n"))));
         });
         worker->start();
     }

@@ -35,6 +35,7 @@
   "phishingNotificationTitle": {"message": "ClamAV: verdachte koppeling gevonden"},
   "phishingNotificationMessage": {"message": "Dit bericht kan een phishingpoging zijn. Klik niet op de koppelingen.\n\nBestand: $filename$", "placeholders": {"filename": {"content": "$1"}}},
   "scanCleanMessage": {"message": "De bijlage is gecontroleerd en lijkt veilig.\n\nBestand: $filename$", "placeholders": {"filename": {"content": "$1"}}},
+  "quarantineFailureReason": {"message": "Quarantaine is niet voltooid: $reason$", "placeholders": {"reason": {"content": "$1"}}},
   "unknownSender": {"message": "Onbekende afzender"},
   "noSubject": {"message": "(geen onderwerp)"},
   "quarantineNotificationMessageWithContext": {"message": "De bijlage is geïsoleerd. Klik op deze melding om de quarantaine te bekijken.\n\nBestand: $filename$\nVan: $sender$\nOnderwerp: $subject$", "placeholders": {"filename": {"content": "$1"}, "sender": {"content": "$2"}, "subject": {"content": "$3"}}},

@@ -35,6 +35,7 @@
   "phishingNotificationTitle": {"message": "ClamAV: suspicious link found"},
   "phishingNotificationMessage": {"message": "This message may be a phishing attempt. Avoid clicking its links.\n\nFile: $filename$", "placeholders": {"filename": {"content": "$1"}}},
   "scanCleanMessage": {"message": "The attachment was checked and looks safe.\n\nFile: $filename$", "placeholders": {"filename": {"content": "$1"}}},
+  "quarantineFailureReason": {"message": "Quarantine was not completed: $reason$", "placeholders": {"reason": {"content": "$1"}}},
   "unknownSender": {"message": "Unknown sender"},
   "noSubject": {"message": "(no subject)"},
   "quarantineNotificationMessageWithContext": {"message": "The attachment was isolated. Click this notification to review it in quarantine.\n\nFile: $filename$\nFrom: $sender$\nSubject: $subject$", "placeholders": {"filename": {"content": "$1"}, "sender": {"content": "$2"}, "subject": {"content": "$3"}}},

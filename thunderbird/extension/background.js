@@ -432,6 +432,8 @@ async function showResult(result, automatic, attachmentName, quiet = false, mess
     : (phishing
       ? (hasMessageContext ? "phishingNotificationMessageWithContext" : "phishingNotificationMessage")
       : (hasMessageContext ? "threatNotificationMessageWithContext" : "threatNotificationMessage"));
+  const quarantineFailure = result.infected && !result.quarantined && result.quarantine_reason
+    ? `\n\n${message("quarantineFailureReason", result.quarantine_reason)}` : "";
   const notification = {
     type: "basic",
     title: result.infected
@@ -444,6 +446,7 @@ async function showResult(result, automatic, attachmentName, quiet = false, mess
       : message("scanCleanMessage", name),
     notificationKind: result.infected ? "threat" : "success"
   };
+  if (quarantineFailure) notification.message += quarantineFailure;
   if (result.infected && result.quarantined) {
     const notificationId = `clamav-quarantine-${Date.now()}-${++notificationSequence}`;
     return createNotification(notification, notificationId);

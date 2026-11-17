@@ -60,6 +60,7 @@ struct ManualQuarantineTask {
 struct ManualQuarantineResult {
     QString path;
     bool success;
+    QString failureReason;
 };
 
 struct RestoreTask {
@@ -833,19 +834,34 @@ private:
                         detection.constData(), hash};
                     char id[CLAMAV_QUARANTINE_ID_LENGTH];
                     char payload[PATH_MAX];
+                    char reason[CLAMAV_QUARANTINE_REASON_LENGTH];
+                    if (!clamav_quarantine_preflight(source.constData(), hash,
+                                                     task.removeOriginal, reason)) {
+                        results->append({task.path, false, QString::fromLocal8Bit(reason)});
+                        continue;
+                    }
                     success = clamav_quarantine_store(source.constData(), &metadata,
                                                       task.removeOriginal, id, payload);
+                    results->append({task.path, success,
+                                     success ? QString() : QObject::tr("The quarantine copy could not be completed.")});
+                    continue;
                 }
-                results->append({task.path, success});
+                results->append({task.path, false,
+                                 QObject::tr("The file could not be read to calculate its hash.")});
             }
         });
         connect(worker, &QThread::finished, this, [this, worker, results, tasks] {
             worker->deleteLater();
             operationBusy_ = false;
             int quarantined = 0;
+            QStringList failures;
             for (const ManualQuarantineResult &result : *results) {
                 if (!result.success)
+                {
+                    if (!result.failureReason.isEmpty())
+                        failures << QStringLiteral("%1: %2").arg(result.path, result.failureReason);
                     continue;
+                }
                 ++quarantined;
                 for (int row = manualFiles->count() - 1; row >= 0; --row)
                     if (manualFiles->item(row)->text() == result.path)
@@ -856,8 +872,9 @@ private:
             setOperationButtonsEnabled(true);
             if (quarantined < tasks.size())
                 QMessageBox::warning(this, tr("Manual quarantine incomplete"),
-                    tr("%1 file(s) were quarantined and %2 file(s) could not be stored.")
-                        .arg(quarantined).arg(tasks.size() - quarantined));
+                    tr("%1 file(s) were quarantined and %2 file(s) could not be stored.\n\n%3")
+                        .arg(quarantined).arg(tasks.size() - quarantined)
+                        .arg(failures.join(QStringLiteral("\n"))));
         });
         worker->start();
     }

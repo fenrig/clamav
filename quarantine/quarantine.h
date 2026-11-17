@@ -9,6 +9,7 @@
 #define CLAMAV_QUARANTINE_ID_LENGTH 33
 #define CLAMAV_QUARANTINE_DEFAULT_RETENTION_DAYS 30
 #define CLAMAV_QUARANTINE_DEFAULT_MAX_FILE_SIZE (512ULL * 1024ULL * 1024ULL)
+#define CLAMAV_QUARANTINE_REASON_LENGTH 256
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +51,12 @@ int clamav_quarantine_store(const char *source_path,
 
 /* Return the maximum size of one payload accepted by the quarantine store. */
 unsigned long long clamav_quarantine_max_file_size(void);
+
+/* Validate that a source can be copied into quarantine and, when requested,
+ * removed from its original directory. The reason buffer receives a
+ * user-readable failure reason when the check fails. */
+int clamav_quarantine_preflight(const char *source_path, const char *sha256,
+                                int move_file, char reason[CLAMAV_QUARANTINE_REASON_LENGTH]);
 
 /* Calculate the SHA-256 used as the shared quarantine blob key. */
 int clamav_quarantine_hash_file(const char *source_path, char output[65]);

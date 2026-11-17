@@ -315,6 +315,85 @@ unsigned long long clamav_quarantine_max_file_size(void)
     return CLAMAV_QUARANTINE_DEFAULT_MAX_FILE_SIZE;
 }
 
+static void preflight_reason(char reason[CLAMAV_QUARANTINE_REASON_LENGTH], const char *text)
+{
+    if (reason != NULL)
+        snprintf(reason, CLAMAV_QUARANTINE_REASON_LENGTH, "%s", text);
+}
+
+static int source_delete_allowed(const char *source_path)
+{
+    char parent[PATH_MAX];
+    char *separator;
+
+    if (source_path == NULL || snprintf(parent, sizeof(parent), "%s", source_path) >= (int)sizeof(parent))
+        return 0;
+    separator = strrchr(parent, '/');
+    if (separator == NULL)
+        return access(".", W_OK | X_OK) == 0;
+    if (separator == parent)
+        separator[1] = '\0';
+    else
+        *separator = '\0';
+    return access(parent, W_OK | X_OK) == 0;
+}
+
+int clamav_quarantine_preflight(const char *source_path, const char *sha256,
+                                int move_file, char reason[CLAMAV_QUARANTINE_REASON_LENGTH])
+{
+    char directory[PATH_MAX];
+    char blob[PATH_MAX];
+    struct stat source_status;
+    struct statvfs filesystem_status;
+    unsigned long long available;
+    int source;
+
+    preflight_reason(reason, "");
+    if (source_path == NULL || sha256 == NULL || !clamav_quarantine_path(directory)) {
+        preflight_reason(reason, "The quarantine directory is not available.");
+        return 0;
+    }
+    source = open(source_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (source < 0) {
+        preflight_reason(reason, "The file cannot be opened for reading.");
+        return 0;
+    }
+    if (fstat(source, &source_status) != 0 || !S_ISREG(source_status.st_mode)) {
+        close(source);
+        preflight_reason(reason, "Only regular files can be quarantined.");
+        return 0;
+    }
+    if (source_status.st_size < 0
+            || (unsigned long long)source_status.st_size > clamav_quarantine_max_file_size()) {
+        close(source);
+        preflight_reason(reason, "The file exceeds the local quarantine size limit.");
+        return 0;
+    }
+    if (statvfs(directory, &filesystem_status) != 0) {
+        close(source);
+        preflight_reason(reason, "The available quarantine storage could not be checked.");
+        return 0;
+    }
+    available = (unsigned long long)filesystem_status.f_bavail
+        * (unsigned long long)filesystem_status.f_frsize;
+    if ((unsigned long long)source_status.st_size > available) {
+        close(source);
+        preflight_reason(reason, "There is not enough free space to copy the file into quarantine.");
+        return 0;
+    }
+    if (!shared_blob_path(sha256, blob)) {
+        close(source);
+        preflight_reason(reason, "The scanner did not provide a valid SHA-256 file hash.");
+        return 0;
+    }
+    close(source);
+    if (move_file && !source_delete_allowed(source_path)) {
+        preflight_reason(reason, "The original file cannot be removed from its directory.");
+        return 0;
+    }
+    return 1;
+}
+
 static int write_metadata(const char *path, const char *id,
                           const struct clamav_quarantine_metadata *metadata,
                           const char *state, const char *reason, long long size)
@@ -386,11 +465,12 @@ int clamav_quarantine_store(const char *source_path,
     int source;
     int destination;
     int success = 0;
+    int blob_created = 0;
     struct stat source_status;
-    struct statvfs filesystem_status;
-    unsigned long long available;
     if (source_path == NULL || metadata == NULL || !clamav_quarantine_path(directory)
             || !random_id(id))
+        return 0;
+    if (!clamav_quarantine_preflight(source_path, metadata->sha256, move_file, NULL))
         return 0;
     if (snprintf(payload_path, PATH_MAX, "%s/%s.payload", directory, id) >= PATH_MAX
             || snprintf(temporary, PATH_MAX, "%s/%s.tmp", directory, id) >= PATH_MAX
@@ -400,15 +480,7 @@ int clamav_quarantine_store(const char *source_path,
     if (source < 0)
         return 0;
     if (fstat(source, &source_status) != 0 || !S_ISREG(source_status.st_mode)
-            || source_status.st_size < 0
-            || (unsigned long long)source_status.st_size > clamav_quarantine_max_file_size()
-            || statvfs(directory, &filesystem_status) != 0) {
-        close(source);
-        return 0;
-    }
-    available = (unsigned long long)filesystem_status.f_bavail
-        * (unsigned long long)filesystem_status.f_frsize;
-    if ((unsigned long long)source_status.st_size > available) {
+            || source_status.st_size < 0) {
         close(source);
         return 0;
     }
@@ -427,6 +499,8 @@ int clamav_quarantine_store(const char *source_path,
             destination = -1;
             if (rename(blob_tmp, blob) != 0)
                 unlink(blob_tmp);
+            else
+                blob_created = 1;
         }
     } else {
         destination = -1;
@@ -436,8 +510,15 @@ int clamav_quarantine_store(const char *source_path,
             && write_metadata(metadata_path, id, metadata, "quarantined", NULL,
                               source_status.st_size)) {
             success = 1;
-            if (move_file && unlink(source_path) != 0)
-                success = 0;
+            if (move_file) {
+                struct stat current_status;
+                if (lstat(source_path, &current_status) != 0
+                        || current_status.st_dev != source_status.st_dev
+                        || current_status.st_ino != source_status.st_ino
+                        || !S_ISREG(current_status.st_mode)
+                        || unlink(source_path) != 0)
+                    success = 0;
+            }
             clamav_quarantine_audit("quarantine", id, metadata->component,
                                     source_path, metadata->detection, success);
         }
@@ -449,6 +530,11 @@ int clamav_quarantine_store(const char *source_path,
         unlink(blob_tmp);
         unlink(payload_path);
         unlink(metadata_path);
+        if (blob_created) {
+            struct stat blob_status;
+            if (lstat(blob, &blob_status) == 0 && blob_status.st_nlink <= 1)
+                unlink(blob);
+        }
     }
     return success;
 }

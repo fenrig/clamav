@@ -181,6 +181,8 @@ async function scanDownload(downloadId) {
       throw new Error(result?.message || "ClamAV could not complete the scan");
     }
     if (!result.infected && !cleanNotifications) return;
+    const quarantineFailure = result.infected && !result.quarantined && result.quarantine_reason
+      ? `\n\n${message("quarantineFailureReason", result.quarantine_reason)}` : "";
     const notification = {
       type: "basic",
       title: result.infected
@@ -189,7 +191,7 @@ async function scanDownload(downloadId) {
       message: result.infected
         ? (result.quarantined
           ? message("downloadQuarantinedMessage", filename(download))
-          : message("downloadThreatMessage", filename(download)))
+          : message("downloadThreatMessage", filename(download))) + quarantineFailure
         : message("downloadCleanMessage", filename(download)),
       iconUrl: notificationIcon(result.infected ? "threat" : "success")
     };

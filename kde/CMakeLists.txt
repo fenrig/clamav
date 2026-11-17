@@ -50,6 +50,12 @@ if(Qt6_FOUND)
         DESTINATION
             ${CMAKE_INSTALL_DATADIR}/applications
         COMPONENT programs)
+    install(
+        FILES
+            ${CMAKE_CURRENT_SOURCE_DIR}/clamav-scan-gui.desktop
+        DESTINATION
+            ${CMAKE_INSTALL_DATADIR}/applications
+        COMPONENT programs)
 else()
     message(STATUS "Native ClamAV scan GUI disabled: Qt6 Core/Gui/Widgets/Network are required")
 endif()

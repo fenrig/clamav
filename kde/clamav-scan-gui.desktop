@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ClamAV Virus Scanner
+Comment=Scan files and folders for viruses with ClamAV
+Exec=clamav-scan-gui
+Icon=clamav
+Terminal=false
+Categories=System;Security;

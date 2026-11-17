@@ -2101,8 +2101,6 @@ int main(int argc, char **argv)
     parser.addPositionalArgument(QStringLiteral("path"), QStringLiteral("Files or directories to scan"));
     parser.process(app);
     const QStringList paths = parser.positionalArguments();
-    if (!parser.isSet(scannerOption) && !parser.isSet(quarantineOption))
-        return 2;
     QString scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
     if (scanner.isEmpty())
         return 2;

@@ -6,6 +6,7 @@ let nativePort = null;
 let nativeCurrent = null;
 const nativeQueue = [];
 let notificationSequence = 0;
+const messageNotificationTargets = new Map();
 
 function notificationIcon(kind = "default") {
   const filename = kind === "success"
@@ -97,9 +98,27 @@ async function openQuarantine() {
   }
 }
 
-messenger.notifications.onClicked.addListener((notificationId) => {
+async function openMessageInTab(messageId) {
+  try {
+    await messenger.messageDisplay.open({
+      messageId,
+      location: "tab",
+      active: true
+    });
+  } catch (error) {
+    console.error("ClamAV: unable to open detected message", error);
+  }
+}
+
+messenger.notifications.onClicked.addListener(async (notificationId) => {
   if (notificationId.startsWith("clamav-quarantine-")) {
-    openQuarantine();
+    await openQuarantine();
+    return;
+  }
+  const messageId = messageNotificationTargets.get(notificationId);
+  if (messageId !== undefined) {
+    messageNotificationTargets.delete(notificationId);
+    await openMessageInTab(messageId);
   }
 });
 
@@ -398,11 +417,21 @@ messenger.downloads.onChanged.addListener((delta) => {
     scanSavedDownload(delta.id).catch(error => console.error("ClamAV download scan failed", error));
 });
 
-async function showResult(result, automatic, attachmentName, quiet = false) {
+async function showResult(result, automatic, attachmentName, quiet = false, messageId = null) {
   if ((automatic || quiet) && !result.infected) return;
   if (!result.infected && !(await settings()).cleanNotifications) return;
   const name = (attachmentName || "attachment").split(/[\\/]/).pop();
   const phishing = isPhishingResult(result);
+  const metadata = result.infected && messageId ? await quarantineMetadata(messageId) : {};
+  const hasMessageContext = Boolean(messageId);
+  const sender = metadata.sender || message("unknownSender");
+  const subject = metadata.subject || message("noSubject");
+  const substitutions = [name, sender, subject];
+  const resultMessageKey = result.quarantined
+    ? (hasMessageContext ? "quarantineNotificationMessageWithContext" : "quarantineNotificationMessage")
+    : (phishing
+      ? (hasMessageContext ? "phishingNotificationMessageWithContext" : "phishingNotificationMessage")
+      : (hasMessageContext ? "threatNotificationMessageWithContext" : "threatNotificationMessage"));
   const notification = {
     type: "basic",
     title: result.infected
@@ -411,14 +440,17 @@ async function showResult(result, automatic, attachmentName, quiet = false) {
         : message(phishing ? "phishingNotificationTitle" : "threatNotificationTitle"))
       : message("scanClean"),
     message: result.infected
-      ? message(result.quarantined
-        ? "quarantineNotificationMessage"
-        : (phishing ? "phishingNotificationMessage" : "threatNotificationMessage"), name)
+      ? message(resultMessageKey, substitutions)
       : message("scanCleanMessage", name),
     notificationKind: result.infected ? "threat" : "success"
   };
   if (result.infected && result.quarantined) {
     const notificationId = `clamav-quarantine-${Date.now()}-${++notificationSequence}`;
+    return createNotification(notification, notificationId);
+  }
+  if (result.infected && messageId) {
+    const notificationId = `clamav-message-${Date.now()}-${++notificationSequence}`;
+    messageNotificationTargets.set(notificationId, messageId);
     return createNotification(notification, notificationId);
   }
   await createNotification(notification);
@@ -665,7 +697,7 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
     if (cached) {
       logScan("message text result from cache", { messageId, part: key, infected: cached.infected });
       await publishDetection(messageId, cached, detection);
-      await showResult(cached, automatic, detection.name, quiet);
+      await showResult(cached, automatic, detection.name, quiet, messageId);
       scanned++;
       continue;
     }
@@ -690,7 +722,7 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
       } else {
         await clearMessageInfected(messageId, detection);
       }
-      await showResult(scan, automatic, detection.name, quiet);
+      await showResult(scan, automatic, detection.name, quiet, messageId);
       logScan("message text scan complete", { messageId, part: key, infected: scan.infected, sha256: scan.sha256 });
       scanned++;
     } catch (error) {
@@ -820,7 +852,7 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
       // file. Automatic mail scans do not quarantine; they only tag and mark
       // the message for review.
       const notificationResult = automatic ? { ...cached, quarantined: false } : cached;
-      await showResult(notificationResult, automatic, attachment.name, quiet);
+      await showResult(notificationResult, automatic, attachment.name, quiet, attachment.messageId);
       return;
     }
     objectUrl = URL.createObjectURL(file);
@@ -840,7 +872,7 @@ async function scanAttachment(attachment, accountId, automatic = false, force = 
     } else {
       await clearMessageInfected(attachment.messageId, attachment);
     }
-    await showResult(result, automatic, attachment.name, quiet);
+    await showResult(result, automatic, attachment.name, quiet, attachment.messageId);
     logScan("attachment scan complete", {
       messageId: attachment.messageId,
       attachment: attachment.name,

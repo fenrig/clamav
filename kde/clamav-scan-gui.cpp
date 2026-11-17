@@ -407,9 +407,9 @@ public:
         });
 
         auto *cards = new QHBoxLayout;
-        queueStatus_ = addCard(cards, tr("Queue"), tr("Measuring…"));
-        cpuStatus_ = addCard(cards, tr("CPU"), tr("Measuring…"));
-        ioStatus_ = addCard(cards, tr("Disk I/O"), tr("Measuring…"));
+        queueStatus_ = addCard(cards, tr("Queue"), tr("Waiting for clamd…"), &queueMeter_);
+        cpuStatus_ = addCard(cards, tr("CPU"), tr("Waiting for clamd…"), &cpuMeter_);
+        ioStatus_ = addCard(cards, tr("Disk I/O"), tr("Waiting for clamd…"), &ioMeter_);
         scanLayout->addLayout(cards);
 
         progress_ = new QProgressBar(this);
@@ -697,6 +697,7 @@ private:
         arguments += paths_;
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
+        cpuTarget_ = clamdPids().isEmpty() ? tr("Scanner") : tr("ClamAV");
     }
 
     void updateStatusCard()
@@ -796,7 +797,8 @@ private:
         return tr("%1 target(s) · %2").arg(names.size()).arg(names.join(QStringLiteral(", ")));
     }
 
-    QLabel *addCard(QHBoxLayout *layout, const QString &title, const QString &value)
+    QLabel *addCard(QHBoxLayout *layout, const QString &title, const QString &value,
+                    QProgressBar **meter = nullptr)
     {
         auto *card = new QFrame(this);
         card->setFrameShape(QFrame::StyledPanel);
@@ -807,8 +809,20 @@ private:
         label->setStyleSheet(QStringLiteral("font-weight: 600;"));
         auto *valueLabel = new QLabel(value, card);
         valueLabel->setWordWrap(true);
+        valueLabel->setMinimumHeight(34);
         cardLayout->addWidget(label);
         cardLayout->addWidget(valueLabel);
+        if (meter) {
+            *meter = new QProgressBar(card);
+            (*meter)->setRange(0, 100);
+            (*meter)->setValue(0);
+            (*meter)->setTextVisible(false);
+            (*meter)->setFixedHeight(7);
+            (*meter)->setStyleSheet(QStringLiteral(
+                "QProgressBar { border: none; border-radius: 3px; background: palette(midlight); }"
+                "QProgressBar::chunk { border-radius: 3px; background: #3daee9; }"));
+            cardLayout->addWidget(*meter);
+        }
         layout->addWidget(card, 1);
         return valueLabel;
     }
@@ -841,32 +855,38 @@ private:
     qint64 processCpuTime() const
     {
         qint64 ticks = 0;
+        bool found = false;
         for (const qint64 pid : pids_) {
             QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
             if (!stat.open(QIODevice::ReadOnly))
-                return -1;
+                continue;
             const QByteArray contents = stat.readAll();
             const int closingParenthesis = contents.lastIndexOf(')');
             if (closingParenthesis < 0)
-                return -1;
+                continue;
             const QList<QByteArray> fields = contents.mid(closingParenthesis + 1).simplified().split(' ');
             if (fields.size() < 13)
-                return -1;
+                continue;
             bool okUser = false, okKernel = false;
-            ticks += fields.at(11).toLongLong(&okUser) + fields.at(12).toLongLong(&okKernel);
-            if (!okUser || !okKernel)
-                return -1;
+            const qint64 user = fields.at(11).toLongLong(&okUser);
+            const qint64 kernel = fields.at(12).toLongLong(&okKernel);
+            if (okUser && okKernel) {
+                ticks += user + kernel;
+                found = true;
+            }
         }
-        return ticks;
+        return found ? ticks : -1;
     }
 
     QPair<qint64, qint64> processIo() const
     {
         qint64 read = 0, write = 0;
+        bool found = false;
         for (const qint64 pid : pids_) {
             QFile io(QStringLiteral("/proc/%1/io").arg(pid));
             if (!io.open(QIODevice::ReadOnly))
-                return {-1, -1};
+                continue;
+            found = true;
             while (!io.atEnd()) {
                 const QList<QByteArray> fields = io.readLine().split(':');
                 if (fields.size() != 2)
@@ -877,7 +897,7 @@ private:
                 if (ok && fields.at(0) == "write_bytes") write += value;
             }
         }
-        return {read, write};
+        return found ? qMakePair(read, write) : qMakePair<qint64, qint64>(-1, -1);
     }
 
     void readOutput()
@@ -962,11 +982,14 @@ private:
     {
         const Stats stats = queryStats(socketPath_);
         if (!stats.valid) {
-            queueStatus_->setText(tr("Unavailable"));
+            queueStatus_->setText(tr("Waiting for clamd statistics…"));
+            queueMeter_->setRange(0, 0);
             return;
         }
-        queueStatus_->setText(tr("%1 queued · %2/%3 threads · %4 MiB")
-            .arg(stats.queue).arg(stats.live + stats.idle).arg(stats.maximum).arg(stats.memory, 0, 'f', 1));
+        queueMeter_->setRange(0, std::max(1, stats.maximum));
+        queueMeter_->setValue(std::min(stats.live, std::max(1, stats.maximum)));
+        queueStatus_->setText(tr("%1 queued · %2 active · %3 idle\n%4 MiB in use")
+            .arg(stats.queue).arg(stats.live).arg(stats.idle).arg(stats.memory, 0, 'f', 1));
     }
 
     void refreshDetectionsPanel()
@@ -1167,22 +1190,40 @@ private:
 
     void updateMetrics()
     {
+        if (process_ && process_->state() != QProcess::NotRunning) {
+            pids_ = {process_->processId()};
+            const QList<qint64> daemons = clamdPids();
+            for (const qint64 pid : daemons) {
+                if (!pids_.contains(pid))
+                    pids_ << pid;
+            }
+            cpuTarget_ = daemons.isEmpty() ? tr("Scanner") : tr("ClamAV");
+        }
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now - started_).count();
+        const double delta = elapsed - sampleTime_;
         const qint64 cpu = processCpuTime();
         const auto io = processIo();
-        if (cpu >= 0 && cpuSample_ >= 0 && elapsed - sampleTime_ > 0) {
-            const double usage = std::max(0.0, (cpu - cpuSample_) / 100.0 / (elapsed - sampleTime_));
+        if (cpu >= 0 && cpuSample_ >= 0 && delta > 0) {
+            const double ticksPerSecond = std::max(1L, sysconf(_SC_CLK_TCK));
+            const double cpuSeconds = std::max(0.0, (cpu - cpuSample_) / ticksPerSecond);
+            const double usage = std::max(0.0, cpuSeconds / delta * 100.0);
             cpuPeak_ = std::max(cpuPeak_, usage);
-            cpuSeconds_ += std::max(0.0, (cpu - cpuSample_) / 100.0);
-            cpuStatus_->setText(tr("%1: %2%").arg(cpuTarget_).arg(usage, 0, 'f', 1));
+            cpuSeconds_ += cpuSeconds;
+            cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(usage))));
+            cpuStatus_->setText(tr("%1% CPU\n%2 active").arg(usage, 0, 'f', 1).arg(cpuTarget_));
         }
-        if (io.first >= 0 && ioSample_.first >= 0 && elapsed - sampleTime_ > 0) {
-            const double rate = (io.first - ioSample_.first + io.second - ioSample_.second) / (elapsed - sampleTime_);
+        if (io.first >= 0 && ioSample_.first >= 0 && delta > 0) {
+            const qint64 readDelta = std::max<qint64>(0, io.first - ioSample_.first);
+            const qint64 writeDelta = std::max<qint64>(0, io.second - ioSample_.second);
+            const double rate = (readDelta + writeDelta) / delta;
             ioTotalRead_ += std::max<qint64>(0, io.first - ioSample_.first);
             ioTotalWrite_ += std::max<qint64>(0, io.second - ioSample_.second);
             ioPeak_ = std::max(ioPeak_, rate);
-            ioStatus_->setText(tr("%1/s").arg(formatBytes(rate)));
+            const double meterMaximum = std::max(1.0, ioPeak_);
+            ioMeter_->setValue(std::min(100, std::max(0, static_cast<int>(rate / meterMaximum * 100.0))));
+            ioStatus_->setText(tr("read %1/s · write %2/s")
+                .arg(formatBytes(readDelta / delta)).arg(formatBytes(writeDelta / delta)));
         }
         cpuSample_ = cpu;
         ioSample_ = io;
@@ -1258,6 +1299,8 @@ private:
             .arg(cpuPeak_, 0, 'f', 1));
         ioStatus_->setText(tr("read %1 · write %2 · peak %3/s")
             .arg(formatBytes(ioTotalRead_)).arg(formatBytes(ioTotalWrite_)).arg(formatBytes(ioPeak_)));
+        cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(cpuPeak_))));
+        ioMeter_->setValue(ioPeak_ > 0 ? 100 : 0);
         activityList_->scrollToBottom();
     }
 
@@ -1484,6 +1527,9 @@ private:
     QLabel *queueStatus_ = nullptr;
     QLabel *cpuStatus_ = nullptr;
     QLabel *ioStatus_ = nullptr;
+    QProgressBar *queueMeter_ = nullptr;
+    QProgressBar *cpuMeter_ = nullptr;
+    QProgressBar *ioMeter_ = nullptr;
     QLabel *statusIcon_ = nullptr;
     QLabel *summary_ = nullptr;
     QLabel *targetSummary_ = nullptr;

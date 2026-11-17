@@ -31,6 +31,7 @@
 #include <QTranslator>
 #include <QVBoxLayout>
 #include <QDialog>
+#include <QFileDialog>
 #include <QDesktopServices>
 #include <QScrollArea>
 #include <QListWidget>
@@ -325,6 +326,79 @@ public:
         tabs_->addTab(scanPage, tr("Scan"));
         layout->addWidget(tabs_, 1);
 
+        auto *targetsPanel = new QFrame(tabs_);
+        targetsPanel->setObjectName(QStringLiteral("scanTargetsPanel"));
+        auto *targetsLayout = new QVBoxLayout(targetsPanel);
+        auto *targetsTitle = new QLabel(tr("Scan locations and files"), targetsPanel);
+        targetsTitle->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
+        targetsLayout->addWidget(targetsTitle);
+        auto *targetsInfo = new QLabel(tr("These targets came from the command line. You can change them after the scan finishes and run the scan again."), targetsPanel);
+        targetsInfo->setWordWrap(true);
+        targetsInfo->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        targetsLayout->addWidget(targetsInfo);
+        pathsList_ = new QListWidget(targetsPanel);
+        pathsList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        pathsList_->addItems(paths_);
+        targetsLayout->addWidget(pathsList_, 1);
+        auto *targetButtons = new QHBoxLayout;
+        addFilesButton_ = new QPushButton(tr("Add files…"), targetsPanel);
+        addFolderButton_ = new QPushButton(tr("Add folder…"), targetsPanel);
+        removePathsButton_ = new QPushButton(tr("Remove selected"), targetsPanel);
+        clearPathsButton_ = new QPushButton(tr("Clear"), targetsPanel);
+        rescanButton_ = new QPushButton(tr("Scan"), targetsPanel);
+        addFilesButton_->setIcon(QIcon::fromTheme(QStringLiteral("document-open")));
+        addFolderButton_->setIcon(QIcon::fromTheme(QStringLiteral("folder-open")));
+        removePathsButton_->setIcon(QIcon::fromTheme(QStringLiteral("edit-delete")));
+        rescanButton_->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh")));
+        targetButtons->addWidget(addFilesButton_);
+        targetButtons->addWidget(addFolderButton_);
+        targetButtons->addWidget(removePathsButton_);
+        targetButtons->addWidget(clearPathsButton_);
+        targetButtons->addStretch();
+        targetButtons->addWidget(rescanButton_);
+        targetsLayout->addLayout(targetButtons);
+        tabs_->addTab(targetsPanel, tr("Locations"));
+        targetsPanel_ = targetsPanel;
+        connect(addFilesButton_, &QPushButton::clicked, this, [this] {
+            const QStringList selected = QFileDialog::getOpenFileNames(this, tr("Choose files to scan"));
+            for (const QString &path : selected)
+                if (!paths_.contains(path)) {
+                    paths_ << path;
+                    pathsList_->addItem(path);
+                }
+            targetSummary_->setText(targetDescription());
+        });
+        connect(addFolderButton_, &QPushButton::clicked, this, [this] {
+            const QString path = QFileDialog::getExistingDirectory(this, tr("Choose a folder to scan"));
+            if (!path.isEmpty() && !paths_.contains(path)) {
+                paths_ << path;
+                pathsList_->addItem(path);
+                targetSummary_->setText(targetDescription());
+            }
+        });
+        connect(removePathsButton_, &QPushButton::clicked, this, [this] {
+            const auto rows = pathsList_->selectionModel()->selectedRows();
+            QStringList paths;
+            for (int row = 0; row < pathsList_->count(); ++row)
+                if (!rows.contains(pathsList_->model()->index(row, 0)))
+                    paths << pathsList_->item(row)->text();
+            paths_ = paths;
+            qDeleteAll(pathsList_->selectedItems());
+            targetSummary_->setText(targetDescription());
+        });
+        connect(clearPathsButton_, &QPushButton::clicked, this, [this] {
+            paths_.clear();
+            pathsList_->clear();
+            targetSummary_->setText(targetDescription());
+        });
+        connect(rescanButton_, &QPushButton::clicked, this, [this] {
+            if (paths_.isEmpty()) {
+                QMessageBox::warning(this, tr("ClamAV"), tr("Add at least one file or folder before scanning."));
+                return;
+            }
+            startScanProcess();
+        });
+
         auto *cards = new QHBoxLayout;
         queueStatus_ = addCard(cards, tr("Queue"), tr("Measuring…"));
         cpuStatus_ = addCard(cards, tr("CPU"), tr("Measuring…"));
@@ -375,11 +449,6 @@ public:
         connect(process_, &QProcess::readyReadStandardError, this, [this] { readOutput(); });
         connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) { scanFinished(code); });
-        QStringList arguments{QStringLiteral("--scan-only")};
-        arguments += paths_;
-        process_->start(scanner_, arguments);
-        pids_ = {process_->processId()};
-
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
         metricsTimer_.start(500);
         connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
@@ -555,9 +624,56 @@ public:
             detailsPanel_->setVisible(!visible);
             detailsToggleButton_->setText(visible ? tr("Show details") : tr("Hide details"));
         });
+        startScanProcess();
     }
 
 private:
+    void setTargetEditingEnabled(bool enabled)
+    {
+        for (QWidget *widget : {static_cast<QWidget *>(addFilesButton_),
+                                static_cast<QWidget *>(addFolderButton_),
+                                static_cast<QWidget *>(removePathsButton_),
+                                static_cast<QWidget *>(clearPathsButton_)})
+            if (widget)
+                widget->setEnabled(enabled);
+        rescanButton_->setEnabled(enabled && finished_ && !paths_.isEmpty());
+    }
+
+    void startScanProcess()
+    {
+        if (paths_.isEmpty() || process_->state() != QProcess::NotRunning)
+            return;
+        finished_ = false;
+        cancelled_ = false;
+        infectionDetected_ = false;
+        detectedFiles_.clear();
+        scanHashes_.clear();
+        rawOutput_.clear();
+        output_->clear();
+        detectionsList_->clear();
+        updateSelectedDetection();
+        tabs_->setCurrentWidget(tabs_->widget(0));
+        summary_->setText(tr("Preparing scan…"));
+        currentFileLabel_->setText(tr("Current file: preparing…"));
+        progress_->setRange(0, 0);
+        progress_->setFormat(tr("Scanning…"));
+        action_->setEnabled(true);
+        action_->setText(tr("Cancel"));
+        setStatusIcon(QColor(QStringLiteral("#3daee9")), QChar());
+        started_ = std::chrono::steady_clock::now();
+        pulseOn_ = false;
+        pulseTimer_.start();
+        metricsTimer_.start(500);
+        statsTimer_.start(1000);
+        fileDisplayTimer_.start();
+        setTargetEditingEnabled(false);
+        updateStatusCard();
+        QStringList arguments{QStringLiteral("--scan-only")};
+        arguments += paths_;
+        process_->start(scanner_, arguments);
+        pids_ = {process_->processId()};
+    }
+
     void updateStatusCard()
     {
         const bool running = !finished_;
@@ -906,8 +1022,8 @@ private:
             detectionsList_->setCurrentRow(0);
         updateSelectedDetection();
         const int count = detectedFiles_.size();
-        if (tabs_)
-            tabs_->setTabText(1, tr("Results (%1)").arg(count));
+        if (tabs_ && detectionsPanel_)
+            tabs_->setTabText(tabs_->indexOf(detectionsPanel_), tr("Results (%1)").arg(count));
     }
 
     DetectionEntry *selectedDetectionEntry()
@@ -1078,6 +1194,8 @@ private:
         updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
+        rescanButton_->setText(tr("Rescan"));
+        setTargetEditingEnabled(true);
         if (exitCode == 1 && infectionDetected_ && !detectedFiles_.isEmpty() && tabs_)
             tabs_->setCurrentWidget(detectionsPanel_);
         const bool canQuarantine = exitCode == 1 && infectionDetected_
@@ -1325,6 +1443,13 @@ private:
     QPushButton *quarantineButton_ = nullptr;
     QCheckBox *quarantineCheckBox_ = nullptr;
     QTabWidget *tabs_ = nullptr;
+    QFrame *targetsPanel_ = nullptr;
+    QListWidget *pathsList_ = nullptr;
+    QPushButton *addFilesButton_ = nullptr;
+    QPushButton *addFolderButton_ = nullptr;
+    QPushButton *removePathsButton_ = nullptr;
+    QPushButton *clearPathsButton_ = nullptr;
+    QPushButton *rescanButton_ = nullptr;
     QFrame *detectionsPanel_ = nullptr;
     QListWidget *detectionsList_ = nullptr;
     QFrame *detailsPanel_ = nullptr;

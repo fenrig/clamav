@@ -1144,6 +1144,7 @@ private:
     {
         const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
         if (!text.isEmpty()) {
+            bool detectionsChanged = false;
             const QString incoming = QString::fromLocal8Bit(text);
             for (const QString &sourceLine : incoming.split(QLatin1Char('\n'))) {
                 const QString line = sourceLine.trimmed();
@@ -1207,6 +1208,8 @@ private:
                         if (!knownThisScan && !knownUnhandled)
                             detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
                                                    result.value(QStringLiteral("quarantined")).toBool(), false});
+                        if (!knownThisScan && !knownUnhandled)
+                            detectionsChanged = true;
                         currentDetectionKeys_.insert(detectionKey);
                         infectionDetected_ = true;
                     }
@@ -1215,12 +1218,16 @@ private:
                     const QString hash = line.mid(QStringLiteral("SHA-256: ").size()).trimmed();
                     scanHashes_.insert(currentFile_, hash);
                     for (auto &entry : detectedFiles_)
-                        if (entry.path == currentFile_)
+                        if (entry.path == currentFile_ && entry.sha256 != hash) {
                             entry.sha256 = hash;
+                            detectionsChanged = true;
+                        }
                 }
             }
-            refreshDetectionsPanel();
-            updateStatusCard();
+            if (detectionsChanged) {
+                refreshDetectionsPanel();
+                updateStatusCard();
+            }
         }
     }
 

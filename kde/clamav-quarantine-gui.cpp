@@ -16,6 +16,10 @@
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLockFile>
@@ -60,6 +64,48 @@ static QString localDescription(const QString &detection)
             || name.contains(QStringLiteral("Worm"), Qt::CaseInsensitive))
         return QObject::tr("The detection name identifies this as a virus or worm signature associated with malicious code.");
     return QObject::tr("ClamAV reported a signature match. Use the web-search or VirusTotal buttons for more context; these results are informational and may be incomplete.");
+}
+
+static void appendMetadataLines(const QJsonObject &object, QStringList &lines,
+                                const QString &indent = QString())
+{
+    for (const QString &key : object.keys()) {
+        QString label = key;
+        label.replace(QLatin1Char('_'), QLatin1Char(' '));
+        if (!label.isEmpty())
+            label[0] = label.at(0).toUpper();
+        const QJsonValue value = object.value(key);
+        if (value.isObject()) {
+            lines << QStringLiteral("%1%2:").arg(indent, label);
+            appendMetadataLines(value.toObject(), lines, indent + QStringLiteral("  "));
+        } else if (value.isArray()) {
+            QStringList values;
+            for (const QJsonValue &item : value.toArray())
+                values << (item.isString() ? item.toString() : QStringLiteral("[value]"));
+            lines << QStringLiteral("%1%2: %3").arg(indent, label, values.join(QStringLiteral(", ")));
+        } else if (value.isString()) {
+            lines << QStringLiteral("%1%2: %3").arg(indent, label, value.toString());
+        } else if (value.isBool()) {
+            lines << QStringLiteral("%1%2: %3").arg(indent, label, value.toBool() ? QObject::tr("Yes") : QObject::tr("No"));
+        } else if (value.isNull()) {
+            lines << QStringLiteral("%1%2: %3").arg(indent, label, QObject::tr("Not set"));
+        } else {
+            lines << QStringLiteral("%1%2: %3").arg(indent, label, QString::number(value.toDouble()));
+        }
+    }
+}
+
+static QString formattedMetadata(const QString &serialized)
+{
+    if (serialized.trimmed().isEmpty() || serialized.trimmed() == QStringLiteral("{}"))
+        return QObject::tr("No metadata recorded.");
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(serialized.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject())
+        return QObject::tr("Metadata unavailable.");
+    QStringList lines;
+    appendMetadataLines(document.object(), lines);
+    return lines.isEmpty() ? QObject::tr("No metadata recorded.") : lines.join(QLatin1Char('\n'));
 }
 
 static int threatLevel(const QString &detection)
@@ -750,7 +796,7 @@ private:
         originalLabel->setText(item->data(Qt::UserRole + 2).toString());
         sourceLabel->setText(item->data(Qt::UserRole + 3).toString());
         originLabel->setText(item->data(Qt::UserRole + 8).toString());
-        metadataLabel->setText(item->data(Qt::UserRole + 9).toString());
+        metadataLabel->setText(formattedMetadata(item->data(Qt::UserRole + 9).toString()));
         hashLabel->setText(item->data(Qt::UserRole + 4).toString());
         const auto created = item->data(Qt::UserRole + 5).toLongLong();
         createdLabel->setText(created > 0 ? QDateTime::fromSecsSinceEpoch(created).toString(Qt::TextDate) : tr("Unknown"));

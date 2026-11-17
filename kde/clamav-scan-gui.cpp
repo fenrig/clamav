@@ -41,6 +41,7 @@
 #include <QListWidget>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QThread>
 #include <QUrl>
 #include <QUuid>
 
@@ -55,6 +56,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 #include <utility>
+#include <memory>
 
 namespace {
 
@@ -155,6 +157,20 @@ struct DetectionEntry {
     QString quarantineId;
     bool handled = false;
     bool deleted = false;
+};
+
+struct QuarantineTask {
+    int index;
+    QString path;
+    QString detection;
+    QString sha256;
+};
+
+struct QuarantineTaskResult {
+    int index;
+    bool success;
+    QString sha256;
+    QString quarantineId;
 };
 
 struct ActivityEntry {
@@ -1564,6 +1580,11 @@ private:
 
     void cancelOrClose()
     {
+        if (operationBusy_) {
+            QMessageBox::information(this, tr("ClamAV"),
+                                     tr("Please wait until the quarantine operation has finished."));
+            return;
+        }
         if (!waitingForTargets_ && !finished_) {
             QMessageBox warning(this);
             warning.setIcon(QMessageBox::Warning);
@@ -1697,6 +1718,12 @@ private:
 
     void closeEvent(QCloseEvent *event) override
     {
+        if (operationBusy_) {
+            QMessageBox::information(this, tr("ClamAV"),
+                                     tr("Please wait until the quarantine operation has finished."));
+            event->ignore();
+            return;
+        }
         if (!confirmCloseWithUnhandledInfections()) {
             event->ignore();
             return;
@@ -1766,63 +1793,91 @@ private:
                                  tr("The detected file paths could not be determined."));
             return;
         }
-        quarantineButton_->setEnabled(false);
-        quarantineCheckBox_->setEnabled(false);
-        int quarantined = 0;
-        int pending = 0;
-        for (auto &detected : detectedFiles_) {
-            if (detected.handled)
-                continue;
-            ++pending;
-            if (quarantineEntry(detected))
-                ++quarantined;
-        }
-        refreshDetectionsIfVisible();
-        updateStatusCard();
-        if (quarantined == pending) {
-            quarantineButton_->setEnabled(false);
-            statusCardDetails_->setText(tr("Detected files were moved to quarantine."));
-        } else {
-            quarantineButton_->setEnabled(true);
-            quarantineCheckBox_->setEnabled(true);
-            QMessageBox::warning(this, tr("ClamAV"),
-                                     tr("%1 of %2 detected files could be quarantined.")
-                                         .arg(quarantined).arg(pending));
-        }
+        QList<int> indexes;
+        for (int index = 0; index < detectedFiles_.size(); ++index)
+            if (!detectedFiles_.at(index).handled && !detectedFiles_.at(index).deleted)
+                indexes << index;
+        startQuarantineOperation(indexes);
     }
 
-    bool quarantineEntry(DetectionEntry &detected)
+    void startQuarantineOperation(const QList<int> &indexes)
     {
-        const QByteArray source = detected.path.toLocal8Bit();
-        const QByteArray name = QFileInfo(detected.path).fileName().toLocal8Bit();
-        const QByteArray detection = detected.detection.toLocal8Bit();
-        QString hash = detected.sha256;
-        if (hash.isEmpty()) {
-            char calculated[65];
-            if (!clamav_quarantine_hash_file(source.constData(), calculated))
-                return false;
-            hash = QString::fromLatin1(calculated);
-            detected.sha256 = hash;
+        if (operationBusy_ || indexes.isEmpty())
+            return;
+        QList<QuarantineTask> tasks;
+        for (const int index : indexes) {
+            if (index < 0 || index >= detectedFiles_.size())
+                continue;
+            const DetectionEntry &entry = detectedFiles_.at(index);
+            tasks.append({index, entry.path, entry.detection, entry.sha256});
         }
-        const QByteArray sha256 = hash.toLatin1();
-        const QByteArray component = "plasma";
-        const clamav_quarantine_metadata metadata{
-            component.constData(), name.constData(), source.constData(),
-            detection.constData(), sha256.constData()};
-        char id[CLAMAV_QUARANTINE_ID_LENGTH];
-        char payload[PATH_MAX];
-        const QString detail = QStringLiteral("severity=%1 (%2); detection=%3")
-            .arg(detectionLevel(detected.detection))
-            .arg(detectionLevelLabel(detectionLevel(detected.detection)))
-            .arg(detected.detection);
-        if (!clamav_quarantine_store(source.constData(), &metadata, 1, id, payload)) {
-            writeAudit(QStringLiteral("scan-quarantine"), detected.path, detail, false);
-            return false;
-        }
-        detected.handled = true;
-        detected.quarantineId = QString::fromLatin1(id);
-        writeAudit(QStringLiteral("scan-quarantine"), detected.path, detail);
-        return true;
+        if (tasks.isEmpty())
+            return;
+        operationBusy_ = true;
+        quarantineButton_->setEnabled(false);
+        quarantineCheckBox_->setEnabled(false);
+        detailQuarantineButton_->setEnabled(false);
+        detailQuarantineAllButton_->setEnabled(false);
+        statusCardDetails_->setText(tr("Moving detected files to quarantine…"));
+        auto results = std::make_shared<QList<QuarantineTaskResult>>();
+        QThread *worker = QThread::create([tasks, results] {
+            for (const QuarantineTask &task : tasks) {
+                const QByteArray source = task.path.toLocal8Bit();
+                const QByteArray name = QFileInfo(task.path).fileName().toLocal8Bit();
+                const QByteArray detection = task.detection.toLocal8Bit();
+                QString hash = task.sha256;
+                if (hash.isEmpty()) {
+                    char calculated[65];
+                    if (!clamav_quarantine_hash_file(source.constData(), calculated)) {
+                        results->append({task.index, false, {}, {}});
+                        continue;
+                    }
+                    hash = QString::fromLatin1(calculated);
+                }
+                const QByteArray sha256 = hash.toLatin1();
+                const QByteArray component = "plasma";
+                const clamav_quarantine_metadata metadata{
+                    component.constData(), name.constData(), source.constData(),
+                    detection.constData(), sha256.constData()};
+                char id[CLAMAV_QUARANTINE_ID_LENGTH];
+                char payload[PATH_MAX];
+                const bool success = clamav_quarantine_store(source.constData(), &metadata, 1, id, payload);
+                results->append({task.index, success, hash,
+                                 success ? QString::fromLatin1(id) : QString()});
+            }
+        });
+        connect(worker, &QThread::finished, this, [this, worker, results, tasks] {
+            worker->deleteLater();
+            operationBusy_ = false;
+            int quarantined = 0;
+            for (const QuarantineTaskResult &result : *results) {
+                if (result.index < 0 || result.index >= detectedFiles_.size())
+                    continue;
+                DetectionEntry &entry = detectedFiles_[result.index];
+                const QString detail = QStringLiteral("severity=%1 (%2); detection=%3")
+                    .arg(detectionLevel(entry.detection))
+                    .arg(detectionLevelLabel(detectionLevel(entry.detection)))
+                    .arg(entry.detection);
+                if (result.success) {
+                    entry.sha256 = result.sha256;
+                    entry.handled = true;
+                    entry.quarantineId = result.quarantineId;
+                    ++quarantined;
+                }
+                writeAudit(QStringLiteral("scan-quarantine"), entry.path, detail, result.success);
+            }
+            quarantineButton_->setEnabled(!quarantine_ && quarantined < tasks.size());
+            quarantineCheckBox_->setEnabled(quarantined < tasks.size());
+            refreshDetectionsIfVisible();
+            updateStatusCard();
+            if (quarantined == tasks.size())
+                statusCardDetails_->setText(tr("Detected files were moved to quarantine."));
+            else
+                QMessageBox::warning(this, tr("ClamAV"),
+                                     tr("%1 of %2 detected files could be quarantined.")
+                                         .arg(quarantined).arg(tasks.size()));
+        });
+        worker->start();
     }
 
     void quarantineSelectedDetection()
@@ -1830,16 +1885,8 @@ private:
         DetectionEntry *entry = selectedDetectionEntry();
         if (!entry || entry->handled || entry->deleted)
             return;
-        if (!quarantineEntry(*entry)) {
-            QMessageBox::warning(this, tr("ClamAV"), tr("The detected file could not be quarantined."));
-            return;
-        }
-        refreshDetectionsIfVisible();
-        updateStatusCard();
-        quarantineButton_->setEnabled(!quarantine_ && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
-                                                   [](const DetectionEntry &candidate) {
-                                                       return !candidate.handled && !candidate.deleted;
-                                                   }));
+        const int index = static_cast<int>(entry - detectedFiles_.data());
+        startQuarantineOperation({index});
     }
 
     void deleteSelectedDetection()
@@ -2016,6 +2063,7 @@ private:
     qint64 cpuSample_ = -1;
     double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0;
     bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
+    bool operationBusy_ = false;
     bool closeLogged_ = false;
     int resultCode_ = 130;
 

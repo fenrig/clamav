@@ -4,6 +4,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QColor>
 #include <QBrush>
 #include <QDateTime>
@@ -37,6 +38,7 @@
 #include <QTextEdit>
 #include <QTabWidget>
 #include <QTimer>
+#include <QThread>
 #include <QUrl>
 #include <QStandardPaths>
 #include <QLocale>
@@ -49,6 +51,25 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+
+struct ManualQuarantineTask {
+    QString path;
+    bool removeOriginal;
+};
+
+struct ManualQuarantineResult {
+    QString path;
+    bool success;
+};
+
+struct RestoreTask {
+    QString id;
+    QString destination;
+};
+
+struct RestoreResult {
+    bool success;
+};
 
 static QString localDescription(const QString &detection)
 {
@@ -606,6 +627,17 @@ public:
     }
 
 private:
+    void closeEvent(QCloseEvent *event) override
+    {
+        if (operationBusy_) {
+            QMessageBox::information(this, tr("ClamAV"),
+                                     tr("Please wait until the file operation has finished."));
+            event->ignore();
+            return;
+        }
+        QMainWindow::closeEvent(event);
+    }
+
     void setQuarantineWatchPath()
     {
         if (!quarantineWatcher_)
@@ -771,41 +803,63 @@ private:
                 tr("The checkbox is unchecked, so the original files would normally be kept. Would you like to delete them after successful quarantine?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
         }
-        int quarantined = 0;
-        int failures = 0;
-        QList<QListWidgetItem *> completed;
+        QList<ManualQuarantineTask> tasks;
         for (int row = 0; row < manualFiles->count(); ++row) {
             auto *item = manualFiles->item(row);
-            const QString path = item->text();
-            char hash[65];
-            if (!clamav_quarantine_hash_file(path.toLocal8Bit().constData(), hash)) {
-                ++failures;
-                continue;
-            }
-            const QByteArray component = "manual";
-            const QByteArray name = QFileInfo(path).fileName().toLocal8Bit();
-            const QByteArray source = path.toLocal8Bit();
-            const QByteArray detection = "Manually quarantined";
-            const clamav_quarantine_metadata metadata{
-                component.constData(), name.constData(), source.constData(),
-                detection.constData(), hash};
-            char id[CLAMAV_QUARANTINE_ID_LENGTH];
-            char payload[PATH_MAX];
-            if (clamav_quarantine_store(source.constData(), &metadata,
-                                        removeOriginals, id, payload)) {
-                ++quarantined;
-                completed.append(item);
-            } else {
-                ++failures;
-            }
+            tasks.append({item->text(), removeOriginals});
         }
-        qDeleteAll(completed);
-        refresh();
-        updateManualFileUi();
-        if (failures > 0)
-            QMessageBox::warning(this, tr("Manual quarantine incomplete"),
-                tr("%1 file(s) were quarantined and %2 file(s) could not be stored.")
-                    .arg(quarantined).arg(failures));
+        startManualQuarantine(tasks);
+    }
+
+    void startManualQuarantine(const QList<ManualQuarantineTask> &tasks)
+    {
+        if (operationBusy_ || tasks.isEmpty())
+            return;
+        operationBusy_ = true;
+        setOperationButtonsEnabled(false);
+        statusHeaderDetails->setText(tr("Moving selected files into quarantine…"));
+        auto results = std::make_shared<QList<ManualQuarantineResult>>();
+        QThread *worker = QThread::create([tasks, results] {
+            for (const ManualQuarantineTask &task : tasks) {
+                const QByteArray source = task.path.toLocal8Bit();
+                char hash[65];
+                bool success = false;
+                if (clamav_quarantine_hash_file(source.constData(), hash)) {
+                    const QByteArray component = "manual";
+                    const QByteArray name = QFileInfo(task.path).fileName().toLocal8Bit();
+                    const QByteArray detection = "Manually quarantined";
+                    const clamav_quarantine_metadata metadata{
+                        component.constData(), name.constData(), source.constData(),
+                        detection.constData(), hash};
+                    char id[CLAMAV_QUARANTINE_ID_LENGTH];
+                    char payload[PATH_MAX];
+                    success = clamav_quarantine_store(source.constData(), &metadata,
+                                                      task.removeOriginal, id, payload);
+                }
+                results->append({task.path, success});
+            }
+        });
+        connect(worker, &QThread::finished, this, [this, worker, results, tasks] {
+            worker->deleteLater();
+            operationBusy_ = false;
+            int quarantined = 0;
+            for (const ManualQuarantineResult &result : *results) {
+                if (!result.success)
+                    continue;
+                ++quarantined;
+                for (int row = manualFiles->count() - 1; row >= 0; --row)
+                    if (manualFiles->item(row)->text() == result.path)
+                        delete manualFiles->takeItem(row);
+            }
+            refresh();
+            updateManualFileUi();
+            setOperationButtonsEnabled(true);
+            if (quarantined < tasks.size())
+                QMessageBox::warning(this, tr("Manual quarantine incomplete"),
+                    tr("%1 file(s) were quarantined and %2 file(s) could not be stored.")
+                        .arg(quarantined).arg(tasks.size() - quarantined));
+        });
+        worker->start();
     }
 
     void refresh()
@@ -1095,6 +1149,22 @@ private:
             .match(item->data(Qt::UserRole + 4).toString()).hasMatch();
     }
 
+    void setOperationButtonsEnabled(bool enabled)
+    {
+        table->setEnabled(enabled);
+        refreshButton->setEnabled(enabled);
+        restoreButton->setEnabled(enabled);
+        deleteButton->setEnabled(enabled);
+        deleteAllButton->setEnabled(enabled);
+        lookupButton->setEnabled(enabled);
+        virusTotalButton->setEnabled(enabled);
+        manualChooseButton->setEnabled(enabled);
+        manualRemoveButton->setEnabled(enabled && !manualFiles->selectedItems().isEmpty());
+        manualQuarantineButton->setEnabled(enabled && manualFiles->count() > 0);
+        if (enabled)
+            updateActionButtons();
+    }
+
     void restore()
     {
         const QList<int> rows = selectedRows();
@@ -1110,11 +1180,7 @@ private:
             const QString destination = QFileDialog::getSaveFileName(this, tr("Restore quarantined file"), initialPath);
             if (destination.isEmpty())
                 return;
-            const QString id = item->data(Qt::UserRole).toString();
-            if (!clamav_quarantine_restore(id.toLatin1().constData(), destination.toLocal8Bit().constData()))
-                QMessageBox::warning(this, tr("Restore failed"), tr("The destination already exists or the quarantined file could not be restored."));
-            else
-                refresh();
+            startRestoreOperation({{item->data(Qt::UserRole).toString(), destination}}, false);
             return;
         }
         if (QMessageBox::question(this, tr("Restore multiple files"),
@@ -1123,17 +1189,46 @@ private:
         const QString directory = QFileDialog::getExistingDirectory(this, tr("Choose restore directory"));
         if (directory.isEmpty())
             return;
-        int failures = 0;
+        QList<RestoreTask> tasks;
         for (const int row : rows) {
             const auto *item = table->item(row, 0);
             const QString id = item->data(Qt::UserRole).toString();
             const QString name = item->data(Qt::UserRole + 2).toString();
-            if (!clamav_quarantine_restore(id.toLatin1().constData(), QDir(directory).filePath(name).toLocal8Bit().constData()))
-                ++failures;
+            tasks.append({id, QDir(directory).filePath(name)});
         }
-        refresh();
-        if (failures > 0)
-            QMessageBox::warning(this, tr("Restore incomplete"), tr("%1 file(s) could not be restored.").arg(failures));
+        startRestoreOperation(tasks, true);
+    }
+
+    void startRestoreOperation(const QList<RestoreTask> &tasks, bool multiple)
+    {
+        if (operationBusy_ || tasks.isEmpty())
+            return;
+        operationBusy_ = true;
+        setOperationButtonsEnabled(false);
+        statusHeaderDetails->setText(tr("Restoring selected files…"));
+        auto results = std::make_shared<QList<RestoreResult>>();
+        QThread *worker = QThread::create([tasks, results] {
+            for (const RestoreTask &task : tasks) {
+                const bool success = clamav_quarantine_restore(task.id.toLatin1().constData(),
+                                                               task.destination.toLocal8Bit().constData()) != 0;
+                results->append(RestoreResult{success});
+            }
+        });
+        connect(worker, &QThread::finished, this, [this, worker, results, multiple] {
+            worker->deleteLater();
+            operationBusy_ = false;
+            int failures = 0;
+            for (const RestoreResult &result : *results)
+                if (!result.success)
+                    ++failures;
+            refresh();
+            setOperationButtonsEnabled(true);
+            if (failures > 0)
+                QMessageBox::warning(this, multiple ? tr("Restore incomplete") : tr("Restore failed"),
+                    multiple ? tr("%1 file(s) could not be restored.").arg(failures)
+                             : tr("The destination already exists or the quarantined file could not be restored."));
+        });
+        worker->start();
     }
 
     void remove()
@@ -1263,6 +1358,7 @@ private:
     bool logNewestFirst_ = true;
     QFileSystemWatcher *quarantineWatcher_ = nullptr;
     QTimer quarantineRefreshTimer_;
+    bool operationBusy_ = false;
 };
 
 int main(int argc, char **argv)

@@ -320,7 +320,7 @@ public:
         targetSummary_->setText(targetDescription());
         targetSummary_->setStyleSheet(QStringLiteral("color: palette(mid);"));
         targetSummary_->setWordWrap(true);
-        layout->addWidget(targetSummary_);
+        targetSummary_->hide();
 
         tabs_->addTab(scanPage, tr("Scan"));
         layout->addWidget(tabs_, 1);
@@ -468,7 +468,7 @@ public:
         detailStatusIcon_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         detailStatusIcon_->setAlignment(Qt::AlignCenter);
         detailContentLayout->addWidget(detailStatusIcon_, 1);
-        auto *lookupActions = new QHBoxLayout;
+        auto *lookupActions = new QVBoxLayout;
         lookupButton_ = new QPushButton(tr("Look up on DuckDuckGo"), detailContent_);
         virusTotalButton_ = new QPushButton(tr("Look up on VirusTotal"), detailContent_);
         lookupButton_->setIcon(QIcon::fromTheme(QStringLiteral("system-search"),
@@ -521,7 +521,14 @@ public:
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 2);
         splitter->setCollapsible(1, true);
-        panelLayout->addWidget(splitter, 1);
+        auto *resultsBody = new QFrame(detectionsPanel_);
+        resultsBody->setObjectName(QStringLiteral("scanResultsBody"));
+        resultsBody->setStyleSheet(QStringLiteral(
+            "QFrame#scanResultsBody { background: palette(base); border: 1px solid palette(mid); border-radius: 8px; }"));
+        auto *resultsBodyLayout = new QVBoxLayout(resultsBody);
+        resultsBodyLayout->setContentsMargins(1, 1, 1, 1);
+        resultsBodyLayout->addWidget(splitter);
+        panelLayout->addWidget(resultsBody, 1);
         panelLayout->addWidget(actionBar);
         detailsPanel_->setStyleSheet(QStringLiteral(
             "QFrame#scanSummaryCard { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"

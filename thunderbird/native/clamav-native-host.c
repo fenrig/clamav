@@ -21,6 +21,7 @@
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define OUTPUT_LIMIT (1024 * 1024)
@@ -235,6 +236,36 @@ static int read_clamd_reply(int sockfd, char **reply)
     return *reply != NULL;
 }
 
+#ifdef CLAMAV_SCANNER_CLAMD_ONLY
+static int clamd_ping(void)
+{
+    struct sockaddr_un address;
+    char command[] = "zPING";
+    char socket_path[sizeof(address.sun_path)];
+    char *reply = NULL;
+    int sockfd;
+    int result = 0;
+    struct timeval timeout = {1, 0};
+
+    if (!clamd_socket_path(socket_path))
+        return 0;
+    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sockfd < 0)
+        return 0;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    strcpy(address.sun_path, socket_path);
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (connect(sockfd, (struct sockaddr *)&address, sizeof(address)) == 0
+            && send_socket_data(sockfd, command, sizeof(command))
+            && read_clamd_reply(sockfd, &reply))
+        result = reply != NULL && strstr(reply, "PONG") != NULL;
+    free(reply);
+    close(sockfd);
+    return result;
+}
+#endif
+
 static int scan_with_clamd(int fd, char **reply)
 {
     struct sockaddr_un address;
@@ -286,6 +317,7 @@ static int scan_with_clamd(int fd, char **reply)
     return strstr(*reply, "FOUND") != NULL ? 1 : (strstr(*reply, "OK") != NULL ? 0 : 2);
 }
 
+#ifndef CLAMAV_SCANNER_CLAMD_ONLY
 static int append_output(char **output, size_t *length, const char *data, size_t count)
 {
     char *replacement;
@@ -350,6 +382,7 @@ static int run_command(char *const argv[], char **output)
     }
     return WEXITSTATUS(status);
 }
+#endif
 
 static char *replace_text(const char *text, const char *needle, const char *replacement)
 {
@@ -408,7 +441,9 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     char quarantine_path[PATH_MAX];
     char quarantine_id[CLAMAV_QUARANTINE_ID_LENGTH];
     struct clamav_quarantine_metadata quarantine_metadata;
+#ifndef CLAMAV_SCANNER_CLAMD_ONLY
     char *clam[] = { (char *)"clamscan", (char *)"--infected", (char *)"--alert-broken-media=no", (char *)path, NULL };
+#endif
     struct json_object *response;
 
     display_name = strrchr(path, '/');
@@ -423,18 +458,27 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     result = scan_with_clamd(file_fd, &output);
     close(file_fd);
     used_clamd = result >= 0;
+#ifdef CLAMAV_SCANNER_CLAMD_ONLY
+    if (result < 0) {
+        free(output);
+        return failure("ClamD is unavailable", sha256);
+    }
+#else
     if (result < 0)
         result = run_command(clam, &output);
+#endif
     if (result < 0)
         return failure("Unable to start ClamAV", sha256);
     if (result == 127)
         return failure("Unable to start ClamAV", sha256);
+#ifndef CLAMAV_SCANNER_CLAMD_ONLY
     if (output != NULL && strstr(output, "Broken.Media") != NULL && result == 1) {
         free(output);
         output = NULL;
         result = run_command(clam, &output);
         used_clamd = 0;
     }
+#endif
     if (strstr(output == NULL ? "" : output, " FOUND") != NULL)
         result = 1;
     if (strstr(output == NULL ? "" : output, " OK") != NULL)
@@ -556,6 +600,8 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     json_object_object_add(response, "infected", json_object_new_boolean(result == 1));
     json_object_object_add(response, "message", json_object_new_string(message));
     json_object_object_add(response, "sha256", json_object_new_string(sha256));
+    json_object_object_add(response, "scanner",
+                           json_object_new_string(used_clamd ? "clamd" : "clamscan"));
     if (quarantine && result == 1)
         json_object_object_add(response, "quarantined", json_object_new_boolean(quarantined));
     if (quarantine && result == 1)

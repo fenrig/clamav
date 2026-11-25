@@ -39,6 +39,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QListWidget>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QThread>
@@ -60,6 +61,8 @@
 
 namespace {
 
+static const int maxActivityEntries = 2000;
+
 static int detectionLevel(const QString &detection)
 {
     const QString name = detection.section(QStringLiteral(": "), -1).trimmed();
@@ -79,6 +82,12 @@ static QString detectionLevelLabel(int level)
     case 3: return QObject::tr("Suspicious content");
     default: return QObject::tr("Malware detection");
     }
+}
+
+static int maximumParallelScans()
+{
+    const int processors = std::max(1, QThread::idealThreadCount());
+    return std::max(1, std::min(32, processors / 2));
 }
 
 static QColor detectionLevelColor(int level)
@@ -177,6 +186,8 @@ struct QuarantineTaskResult {
 struct ActivityEntry {
     QString path;
     QString detection;
+    QString status;
+    QString error;
 };
 
 QList<qint64> clamdPids()
@@ -537,14 +548,25 @@ public:
 
         auto *buttons = new QHBoxLayout;
         buttons->addStretch();
+        auto *parallelLabel = new QLabel(tr("Parallel scans:"), this);
+        workersSpinBox_ = new QSpinBox(this);
+        workersSpinBox_->setRange(1, maximumParallelScans());
+        workersSpinBox_->setValue(std::min(2, maximumParallelScans()));
+        workersSpinBox_->setToolTip(tr("Number of files scanned at the same time"));
+        connect(workersSpinBox_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+            if (process_ && process_->state() != QProcess::NotRunning)
+                process_->write(QStringLiteral("WORKERS %1\n").arg(value).toUtf8());
+        });
+        buttons->addWidget(parallelLabel);
+        buttons->addWidget(workersSpinBox_);
         quarantineCheckBox_ = new QCheckBox(tr("Quarantine detected files when the scan finishes"), this);
         quarantineCheckBox_->setChecked(quarantine_);
-        quarantineCheckBox_->setEnabled(!quarantine_);
+        quarantineCheckBox_->setEnabled(true);
         buttons->addWidget(quarantineCheckBox_);
         quarantineButton_ = new QPushButton(tr("Quarantine detected files"), this);
         quarantineButton_->setIcon(QIcon::fromTheme(QStringLiteral("clamav-quarantine"),
                                                      QIcon::fromTheme(QStringLiteral("security-high"))));
-        quarantineButton_->setVisible(!quarantine_);
+        quarantineButton_->setVisible(true);
         quarantineButton_->setEnabled(false);
         connect(quarantineButton_, &QPushButton::clicked, this, [this] {
             quarantineDetectedFiles();
@@ -569,6 +591,18 @@ public:
         metricsTimer_.start(30000);
         connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
         statsTimer_.start(30000);
+        scanWatchdogTimer_.setInterval(1000);
+        connect(&scanWatchdogTimer_, &QTimer::timeout, this, [this] {
+            if (finished_ || paused_ || !lastScanEventValid_)
+                return;
+            const double quietSeconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - lastScanEvent_).count();
+            const bool stale = quietSeconds >= 4.0;
+            if (scannerStale_ != stale) {
+                scannerStale_ = stale;
+                updateStatusCard();
+            }
+        });
         updateQueue();
         fileDisplayTimer_.setInterval(150);
         connect(&fileDisplayTimer_, &QTimer::timeout, this, [this] {
@@ -965,6 +999,14 @@ private:
         scanHashes_.clear();
         activityList_->clear();
         activityEntries_.clear();
+        activityIndices_.clear();
+        activityTotalCount_ = 0;
+        totalFiles_ = 0;
+        completedFiles_ = 0;
+        scanErrorCount_ = 0;
+        scanInfectedCount_ = 0;
+        scanSkippedCount_ = 0;
+        scanFailureReason_.clear();
         activityDetectionCount_ = 0;
         currentActivityIndex_ = -1;
         updateActivitySummary();
@@ -986,9 +1028,14 @@ private:
         metricsTimer_.start(30000);
         statsTimer_.start(30000);
         fileDisplayTimer_.start();
+        scanWatchdogTimer_.start();
+        lastScanEvent_ = std::chrono::steady_clock::now();
+        lastScanEventValid_ = true;
+        scannerStale_ = false;
         setTargetEditingEnabled(false);
         updateStatusCard();
-        QStringList arguments{QStringLiteral("--scan-only")};
+        QStringList arguments{QStringLiteral("--scan-only"), QStringLiteral("--workers"),
+                              QString::number(workersSpinBox_->value())};
         arguments += paths_;
         process_->start(scanner_, arguments);
         pids_ = {process_->processId()};
@@ -1021,6 +1068,10 @@ private:
             color = QColor(243, 156, 18);
             title = tr("Scan paused");
             details = tr("The scan is paused. Resume or stop the scan when ready.");
+        } else if (running && scannerStale_) {
+            color = QColor(220, 145, 35);
+            title = tr("Scanner is not responding");
+            details = tr("No scan progress has been received recently. You can wait or stop the scan.");
         } else if (running && pending > 0) {
             color = red;
             title = tr("Threat detected");
@@ -1085,12 +1136,35 @@ private:
         const ActivityEntry &entry = activityEntries_.at(index);
         QListWidgetItem *item = activityList_->item(index);
         const QColor color = activityColor(entry.detection);
-        item->setText(entry.detection.isEmpty()
-            ? tr("Scanned · %1").arg(QDir::toNativeSeparators(entry.path))
-            : tr("Threat · %1\n%2").arg(QDir::toNativeSeparators(entry.path), entry.detection));
-        item->setForeground(entry.detection.isEmpty() ? QColor(130, 130, 130) : color);
-        item->setBackground(QColor(color.red(), color.green(), color.blue(), entry.detection.isEmpty() ? 12 : 28));
-        item->setSizeHint(QSize(item->sizeHint().width(), entry.detection.isEmpty() ? 32 : 52));
+        const QString nativePath = QDir::toNativeSeparators(entry.path);
+        if (entry.status == QStringLiteral("skipped")) {
+            item->setText(tr("Skipped · %1\n%2").arg(nativePath,
+                                                       entry.error.isEmpty() ? tr("The file was not scanned.") : entry.error));
+            item->setForeground(QColor(170, 120, 45));
+            item->setBackground(QColor(170, 120, 45, 24));
+            item->setSizeHint(QSize(item->sizeHint().width(), 52));
+        } else if (entry.status == QStringLiteral("error")) {
+            item->setText(tr("Error · %1\n%2").arg(nativePath,
+                                                    entry.error.isEmpty() ? tr("The file could not be scanned.") : entry.error));
+            item->setForeground(QColor(210, 120, 40));
+            item->setBackground(QColor(210, 120, 40, 24));
+            item->setSizeHint(QSize(item->sizeHint().width(), 52));
+        } else if (entry.status == QStringLiteral("infected") || !entry.detection.isEmpty()) {
+            item->setText(tr("Threat · %1\n%2").arg(nativePath, entry.detection));
+            item->setForeground(color);
+            item->setBackground(QColor(color.red(), color.green(), color.blue(), 28));
+            item->setSizeHint(QSize(item->sizeHint().width(), 52));
+        } else if (entry.status == QStringLiteral("scanning")) {
+            item->setText(tr("Scanning · %1").arg(nativePath));
+            item->setForeground(QColor(130, 130, 130));
+            item->setBackground(QColor(130, 130, 130, 12));
+            item->setSizeHint(QSize(item->sizeHint().width(), 32));
+        } else {
+            item->setText(tr("Clean · %1").arg(nativePath));
+            item->setForeground(QColor(130, 130, 130));
+            item->setBackground(QColor(130, 130, 130, 12));
+            item->setSizeHint(QSize(item->sizeHint().width(), 32));
+        }
     }
 
     void updateActivitySummary()
@@ -1098,8 +1172,8 @@ private:
         if (!activitySummary_)
             return;
         activitySummary_->setText(activityDetectionCount_ == 0
-            ? tr("%1 file(s) scanned · no detections found.").arg(activityEntries_.size())
-            : tr("%1 file(s) scanned · %2 detection(s) found.").arg(activityEntries_.size()).arg(activityDetectionCount_));
+            ? tr("%1 file(s) scanned · no detections found.").arg(activityTotalCount_)
+            : tr("%1 file(s) scanned · %2 detection(s) found.").arg(activityTotalCount_).arg(activityDetectionCount_));
         activitySummary_->setStyleSheet(QStringLiteral("font-weight: 600; color: %1;")
             .arg(activityDetectionCount_ == 0 ? QStringLiteral("palette(mid)") : QStringLiteral("rgb(210, 55, 65)")));
     }
@@ -1230,26 +1304,108 @@ private:
 
     void readOutput()
     {
-        const QByteArray text = process_->readAllStandardOutput() + process_->readAllStandardError();
-        if (!text.isEmpty()) {
+        outputBuffer_ += process_->readAllStandardOutput();
+        outputBuffer_ += process_->readAllStandardError();
+        if (!outputBuffer_.isEmpty()) {
             bool detectionsChanged = false;
             const bool activityVisible = tabs_ && tabs_->currentWidget() == scanPage_;
-            const QString incoming = QString::fromLocal8Bit(text);
-            for (const QString &sourceLine : incoming.split(QLatin1Char('\n'))) {
-                const QString line = sourceLine.trimmed();
-                if (line.startsWith(QStringLiteral("SCAN_FILE: "))) {
+            int lineEnd;
+            while ((lineEnd = outputBuffer_.indexOf('\n')) >= 0) {
+                QString line = QString::fromLocal8Bit(outputBuffer_.left(lineEnd)).trimmed();
+                outputBuffer_.remove(0, lineEnd + 1);
+                if (line.startsWith(QStringLiteral("SCAN_EVENT: "))) {
+                    QJsonParseError eventError;
+                    QJsonDocument eventDocument = QJsonDocument::fromJson(
+                        line.mid(QStringLiteral("SCAN_EVENT: ").size()).toUtf8(), &eventError);
+                    if (eventError.error != QJsonParseError::NoError || !eventDocument.isObject())
+                        continue;
+                    const QJsonObject event = eventDocument.object();
+                    const QString eventName = event.value(QStringLiteral("event")).toString();
+                    if (eventName == QStringLiteral("file_started")
+                            || eventName == QStringLiteral("file_progress")
+                            || eventName == QStringLiteral("file_result")) {
+                        lastScanEvent_ = std::chrono::steady_clock::now();
+                        lastScanEventValid_ = true;
+                        if (scannerStale_) {
+                            scannerStale_ = false;
+                            updateStatusCard();
+                        }
+                    }
+                    if (eventName == QStringLiteral("scan_finished")) {
+                        scanErrorCount_ = event.value(QStringLiteral("errors")).toInt();
+                        scanInfectedCount_ = event.value(QStringLiteral("infected")).toInt();
+                        scanSkippedCount_ = event.value(QStringLiteral("skipped")).toInt();
+                        continue;
+                    } else if (eventName == QStringLiteral("scan_started")) {
+                        line = QStringLiteral("SCAN_TOTAL: %1").arg(event.value(QStringLiteral("total")).toInt());
+                    } else if (eventName == QStringLiteral("file_started")) {
+                        line = QStringLiteral("SCAN_FILE: %1").arg(event.value(QStringLiteral("path")).toString());
+                    } else if (eventName == QStringLiteral("file_progress")) {
+                        line = QStringLiteral("SCAN_PROGRESS: %1").arg(event.value(QStringLiteral("path")).toString());
+                    } else if (eventName == QStringLiteral("scan_cancelled")) {
+                        summary_->setText(tr("Cancelling scan…"));
+                        continue;
+                    } else if (eventName == QStringLiteral("scan_error")) {
+                        scanFailureReason_ = event.value(QStringLiteral("message")).toString();
+                        continue;
+                    } else if (eventName == QStringLiteral("file_result")) {
+                        QJsonObject result = event;
+                        result.remove(QStringLiteral("event"));
+                        line = QStringLiteral("SCAN_RESULT: %1")
+                            .arg(QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)));
+                    } else {
+                        continue;
+                    }
+                }
+                if (line.startsWith(QStringLiteral("SCAN_PROGRESS: "))) {
+                    currentFile_ = line.mid(QStringLiteral("SCAN_PROGRESS: ").size());
+                } else if (line.startsWith(QStringLiteral("SCAN_TOTAL: "))) {
+                    totalFiles_ = line.mid(QStringLiteral("SCAN_TOTAL: ").size()).toInt();
+                    if (totalFiles_ > 0) {
+                        progress_->setRange(0, totalFiles_);
+                        progress_->setValue(0);
+                        progress_->setFormat(tr("%1/%2 files").arg(0).arg(totalFiles_));
+                    }
+                } else if (line.startsWith(QStringLiteral("SCAN_FILE: "))) {
+                    lastScanEvent_ = std::chrono::steady_clock::now();
+                    lastScanEventValid_ = true;
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
-                    activityEntries_.append({currentFile_, {}});
+                    activityEntries_.append({currentFile_, {}, QStringLiteral("scanning"), {}});
+                    ++activityTotalCount_;
+                    if (activityEntries_.size() > maxActivityEntries)
+                        activityEntries_.removeFirst();
+                    activityIndices_.clear();
+                    for (int activityIndex = 0; activityIndex < activityEntries_.size(); ++activityIndex)
+                        activityIndices_.insert(activityEntries_.at(activityIndex).path, activityIndex);
                     currentActivityIndex_ = activityEntries_.size() - 1;
                     if (activityVisible) {
+                        if (activityList_->count() >= maxActivityEntries)
+                            delete activityList_->takeItem(0);
                         activityList_->addItem(QString());
                         updateActivityItem(currentActivityIndex_);
                         updateActivitySummary();
                     }
                 } else if (line.startsWith(QStringLiteral("SCAN_RESULT: "))) {
+                    lastScanEvent_ = std::chrono::steady_clock::now();
+                    lastScanEventValid_ = true;
                     const QJsonDocument document = QJsonDocument::fromJson(
                         line.mid(QStringLiteral("SCAN_RESULT: ").size()).toUtf8());
                     const QJsonObject result = document.object();
+                    const QString resultPath = result.value(QStringLiteral("path")).toString(currentFile_);
+                    const int resultActivityIndex = activityIndices_.value(resultPath, -1);
+                    if (resultActivityIndex >= 0) {
+                        ActivityEntry &activity = activityEntries_[resultActivityIndex];
+                        activity.status = result.value(QStringLiteral("status")).toString(
+                            result.value(QStringLiteral("infected")).toBool() ? QStringLiteral("infected")
+                                                                               : QStringLiteral("clean"));
+                        activity.error = result.value(QStringLiteral("message")).toString();
+                    }
+                    ++completedFiles_;
+                    if (totalFiles_ > 0) {
+                        progress_->setRange(0, totalFiles_);
+                        progress_->setValue(std::min(completedFiles_, totalFiles_));
+                        progress_->setFormat(tr("%1/%2 files").arg(std::min(completedFiles_, totalFiles_)).arg(totalFiles_));
+                    }
                     const bool infected = result.value(QStringLiteral("infected")).toBool();
                     QString activityDetection;
                     if (infected) {
@@ -1263,19 +1419,18 @@ private:
                         if (activityDetection.isEmpty())
                             activityDetection = canonicalDetection(activityMessage.section(QLatin1Char('\n'), 0, 0));
                     }
-                    if (activityVisible && currentActivityIndex_ >= 0) {
-                        if (activityEntries_[currentActivityIndex_].detection.isEmpty()
-                                && !activityDetection.isEmpty())
-                            ++activityDetectionCount_;
-                        activityEntries_[currentActivityIndex_].detection = activityDetection;
-                        updateActivityItem(currentActivityIndex_);
-                        updateActivitySummary();
-                    } else if (currentActivityIndex_ >= 0
-                               && activityEntries_[currentActivityIndex_].detection.isEmpty()
-                               && !activityDetection.isEmpty()) {
+                    if (!activityDetection.isEmpty()
+                            && (resultActivityIndex < 0
+                                || activityEntries_[resultActivityIndex].detection.isEmpty()))
                         ++activityDetectionCount_;
+                    if (resultActivityIndex >= 0) {
+                        activityEntries_[resultActivityIndex].detection = activityDetection;
+                        if (activityVisible)
+                            updateActivityItem(resultActivityIndex);
                     }
-                    scanHashes_.insert(currentFile_, result.value(QStringLiteral("sha256")).toString());
+                    if (activityVisible)
+                        updateActivitySummary();
+                    scanHashes_.insert(resultPath, result.value(QStringLiteral("sha256")).toString());
                     if (infected) {
                         QString detection;
                         const QString message = result.value(QStringLiteral("message")).toString();
@@ -1287,22 +1442,22 @@ private:
                         }
                         if (detection.isEmpty())
                             detection = canonicalDetection(message.section(QLatin1Char('\n'), 0, 0));
-                        const QString detectionKey = currentFile_ + QLatin1Char('\n') + detection;
+                        const QString detectionKey = resultPath + QLatin1Char('\n') + detection;
                         const bool knownThisScan = currentDetectionKeys_.contains(detectionKey);
                         const bool knownUnhandled = std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
-                            [this, &detection](const DetectionEntry &entry) {
+                            [this, &detection, &resultPath](const DetectionEntry &entry) {
                                 return !entry.handled && !entry.deleted
-                                    && entry.path == currentFile_
+                                    && entry.path == resultPath
                                     && entry.detection.compare(detection, Qt::CaseInsensitive) == 0;
                             });
                         if (!knownThisScan) {
                             const int level = detectionLevel(detection);
-                            writeAudit(QStringLiteral("scan-detection"), currentFile_,
+                            writeAudit(QStringLiteral("scan-detection"), resultPath,
                                        QStringLiteral("severity=%1 (%2); detection=%3")
                                            .arg(level).arg(detectionLevelLabel(level), detection));
                         }
                         if (!knownThisScan && !knownUnhandled)
-                            detectedFiles_.append({currentFile_, detection, scanHashes_.value(currentFile_), {},
+                            detectedFiles_.append({resultPath, detection, scanHashes_.value(resultPath), {},
                                                    result.value(QStringLiteral("quarantined")).toBool(), false});
                         if (!knownThisScan && !knownUnhandled)
                             detectionsChanged = true;
@@ -1612,6 +1767,8 @@ private:
             pauseButton_->setEnabled(false);
             action_->setEnabled(false);
             stopStatusButton_->setEnabled(false);
+            process_->write("CANCEL\n");
+            process_->waitForBytesWritten(100);
             process_->terminate();
             QTimer::singleShot(1500, this, [this] {
                 if (process_->state() != QProcess::NotRunning)
@@ -1669,6 +1826,7 @@ private:
         metricsTimer_.stop();
         statsTimer_.stop();
         fileDisplayTimer_.stop();
+        scanWatchdogTimer_.stop();
         updateMetrics();
         finished_ = true;
         paused_ = false;
@@ -1680,6 +1838,12 @@ private:
         progress_->setFormat(tr("Complete"));
         const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count();
         const QString summary = cancelled_ ? tr("The scan was cancelled.")
+            : !scanFailureReason_.isEmpty() ? tr("The scan could not start: %1").arg(scanFailureReason_)
+            : scanErrorCount_ > 0 || scanSkippedCount_ > 0 ? (scanInfectedCount_ > 0
+                ? tr("Threats were identified, but %1 file(s) failed and %2 were skipped.")
+                    .arg(scanErrorCount_).arg(scanSkippedCount_)
+                : tr("The scan completed with %1 file(s) failed and %2 skipped.")
+                    .arg(scanErrorCount_).arg(scanSkippedCount_))
             : exitCode == 0 ? tr("No threats found.")
             : exitCode == 1 ? tr("Threats were identified.")
                             : tr("The scan could not be completed.");
@@ -1712,7 +1876,7 @@ private:
             && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                            [](const DetectionEntry &entry) { return !entry.handled; });
         quarantineButton_->setEnabled(canQuarantine);
-        if (canQuarantine && (quarantine_ || quarantineCheckBox_->isChecked()))
+        if (canQuarantine && quarantineCheckBox_->isChecked())
             quarantineDetectedFiles();
         cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
             .arg(elapsed > 0 ? cpuSeconds_ / elapsed * 100.0 : 0.0, 0, 'f', 1)
@@ -1883,7 +2047,7 @@ private:
                            result.success ? detail : detail + QStringLiteral("; reason=") + result.failureReason,
                            result.success);
             }
-            quarantineButton_->setEnabled(!quarantine_ && quarantined < tasks.size());
+            quarantineButton_->setEnabled(quarantined < tasks.size());
             quarantineCheckBox_->setEnabled(quarantined < tasks.size());
             refreshDetectionsIfVisible();
             updateStatusCard();
@@ -1990,7 +2154,7 @@ private:
                                  tr("The infection could not be deleted."));
             return;
         }
-        quarantineButton_->setEnabled(!quarantine_ && std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
+        quarantineButton_->setEnabled(std::any_of(detectedFiles_.cbegin(), detectedFiles_.cend(),
                                                    [](const DetectionEntry &candidate) {
                                                        return !candidate.handled && !candidate.deleted;
                                                    }));
@@ -2015,6 +2179,15 @@ private:
     int currentActivityIndex_ = -1;
     QHash<QString, QString> scanHashes_;
     QString currentFile_;
+    QByteArray outputBuffer_;
+    QHash<QString, int> activityIndices_;
+    int totalFiles_ = 0;
+    int completedFiles_ = 0;
+    int activityTotalCount_ = 0;
+    int scanErrorCount_ = 0;
+    int scanInfectedCount_ = 0;
+    int scanSkippedCount_ = 0;
+    QString scanFailureReason_;
     QList<qint64> pids_;
     QProcess *process_ = nullptr;
     QLabel *queueStatus_ = nullptr;
@@ -2064,6 +2237,7 @@ private:
     QPushButton *detailQuarantineAllButton_ = nullptr;
     QPushButton *detailDeleteAllButton_ = nullptr;
     QProgressBar *progress_ = nullptr;
+    QSpinBox *workersSpinBox_ = nullptr;
     QListWidget *activityList_ = nullptr;
     QListWidget *logView_ = nullptr;
     QLineEdit *logFilter_ = nullptr;
@@ -2075,11 +2249,14 @@ private:
     QPushButton *action_ = nullptr;
     QPushButton *pauseButton_ = nullptr;
     QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;
+    QTimer scanWatchdogTimer_;
     QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
     qint64 cpuSample_ = -1;
     double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0;
     bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
+    bool scannerStale_ = false, lastScanEventValid_ = false;
+    std::chrono::steady_clock::time_point lastScanEvent_;
     bool operationBusy_ = false;
     bool closeLogged_ = false;
     int resultCode_ = 130;
@@ -2105,7 +2282,9 @@ int main(int argc, char **argv)
     parser.addPositionalArgument(QStringLiteral("path"), QStringLiteral("Files or directories to scan"));
     parser.process(app);
     const QStringList paths = parser.positionalArguments();
-    QString scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
+    QString scanner = parser.value(scannerOption);
+    if (scanner.isEmpty())
+        scanner = QStandardPaths::findExecutable(QStringLiteral("clamav-scan-quarantine-helper"));
     if (scanner.isEmpty())
         return 2;
     ScanDialog dialog(scanner, paths, parser.isSet(quarantineOption));

@@ -7,6 +7,7 @@ if(NOT C_LINUX)
 endif()
 
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Network)
+find_package(Threads REQUIRED)
 if(Qt6_FOUND)
     find_program(CLAMAV_LRELEASE_EXECUTABLE lrelease REQUIRED)
     set(CLAMAV_TRANSLATION_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/clamav/translations")
@@ -39,7 +40,7 @@ if(Qt6_FOUND)
 
     add_executable(clamav-scan-quarantine-helper clamav-scan-quarantine.c)
     target_link_libraries(clamav-scan-quarantine-helper PRIVATE
-        clamav-quarantine JSONC::jsonc OpenSSL::Crypto)
+        clamav-quarantine JSONC::jsonc OpenSSL::Crypto Threads::Threads)
     target_compile_options(clamav-scan-quarantine-helper PRIVATE -D_GNU_SOURCE)
     set_target_properties(clamav-scan-quarantine-helper PROPERTIES
         COMPILE_FLAGS "${WARNCFLAGS}")

@@ -607,7 +607,11 @@ public:
         fileDisplayTimer_.setInterval(150);
         connect(&fileDisplayTimer_, &QTimer::timeout, this, [this] {
             if (!currentFile_.isEmpty()) {
-                const QString text = tr("Current file: %1").arg(QDir::toNativeSeparators(currentFile_));
+                const QString text = currentFileElapsedSeconds_ >= 1.0
+                    ? tr("Current file: %1 (%2 s)")
+                        .arg(QDir::toNativeSeparators(currentFile_))
+                        .arg(currentFileElapsedSeconds_, 0, 'f', 0)
+                    : tr("Current file: %1").arg(QDir::toNativeSeparators(currentFile_));
                 if (currentFileLabel_->text() != text)
                     currentFileLabel_->setText(text);
                 if (activityList_ && activityList_->isVisible()) {
@@ -1340,8 +1344,10 @@ private:
                         line = QStringLiteral("SCAN_TOTAL: %1").arg(event.value(QStringLiteral("total")).toInt());
                     } else if (eventName == QStringLiteral("file_started")) {
                         line = QStringLiteral("SCAN_FILE: %1").arg(event.value(QStringLiteral("path")).toString());
+                        currentFileElapsedSeconds_ = 0.0;
                     } else if (eventName == QStringLiteral("file_progress")) {
                         line = QStringLiteral("SCAN_PROGRESS: %1").arg(event.value(QStringLiteral("path")).toString());
+                        currentFileElapsedSeconds_ = event.value(QStringLiteral("elapsed_seconds")).toDouble();
                     } else if (eventName == QStringLiteral("scan_cancelled")) {
                         summary_->setText(tr("Cancelling scan…"));
                         continue;
@@ -2179,6 +2185,7 @@ private:
     int currentActivityIndex_ = -1;
     QHash<QString, QString> scanHashes_;
     QString currentFile_;
+    double currentFileElapsedSeconds_ = 0.0;
     QByteArray outputBuffer_;
     QHash<QString, int> activityIndices_;
     int totalFiles_ = 0;

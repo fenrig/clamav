@@ -29,6 +29,7 @@ static pthread_mutex_t scan_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t scan_condition = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t output_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char *active_paths[MAX_SCAN_WORKERS];
+static struct timespec active_started[MAX_SCAN_WORKERS];
 
 static void print_event(struct json_object *event)
 {
@@ -205,26 +206,34 @@ static void *scan_heartbeat(void *unused)
     (void)unused;
     for (;;) {
         struct timespec delay;
+        struct timespec now;
         char *paths[MAX_SCAN_WORKERS];
+        double elapsed[MAX_SCAN_WORKERS];
         int count = 0;
         int i;
         delay.tv_sec = 1;
         delay.tv_nsec = 0;
         nanosleep(&delay, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &now);
         pthread_mutex_lock(&scan_mutex);
         if (scan_stop) {
             pthread_mutex_unlock(&scan_mutex);
             break;
         }
-        for (i = 0; i < MAX_SCAN_WORKERS; ++i)
-            if (active_paths[i] != NULL && (paths[count] = strdup(active_paths[i])) != NULL)
+        for (i = 0; i < MAX_SCAN_WORKERS; ++i) {
+            if (active_paths[i] != NULL && (paths[count] = strdup(active_paths[i])) != NULL) {
+                elapsed[count] = (double)(now.tv_sec - active_started[i].tv_sec)
+                    + (double)(now.tv_nsec - active_started[i].tv_nsec) / 1000000000.0;
                 ++count;
+            }
+        }
         pthread_mutex_unlock(&scan_mutex);
         for (i = 0; i < count; ++i) {
             struct json_object *event = json_object_new_object();
             json_object_object_add(event, "event", json_object_new_string("file_progress"));
             json_object_object_add(event, "path", json_object_new_string(paths[i]));
             json_object_object_add(event, "state", json_object_new_string("scanning"));
+            json_object_object_add(event, "elapsed_seconds", json_object_new_double(elapsed[i]));
             print_event(event);
             free(paths[i]);
         }
@@ -250,11 +259,14 @@ static void *scan_worker(void *argument)
         if (path != NULL) {
             pthread_mutex_lock(&scan_mutex);
             active_paths[worker_id] = strdup(path);
+            clock_gettime(CLOCK_MONOTONIC, &active_started[worker_id]);
             pthread_mutex_unlock(&scan_mutex);
             scan_one(path);
             pthread_mutex_lock(&scan_mutex);
             free(active_paths[worker_id]);
             active_paths[worker_id] = NULL;
+            active_started[worker_id].tv_sec = 0;
+            active_started[worker_id].tv_nsec = 0;
             pthread_mutex_unlock(&scan_mutex);
             free(path);
         } else {

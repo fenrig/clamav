@@ -1,7 +1,6 @@
 /* Command-line front end for the shared native ClamD scanner. */
 
 #define CLAMAV_SCANNER_NO_MAIN
-#define CLAMAV_SCANNER_CLAMD_ONLY
 #include "../thunderbird/native/clamav-native-host.c"
 
 #include <ftw.h>

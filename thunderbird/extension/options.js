@@ -4,6 +4,11 @@ const defaults = { autoScan: true };
 const cacheDefaults = { maxEntries: 1000, maxAgeDays: 180 };
 let accounts = {};
 
+function maximumNativeWorkers() {
+  const processors = Math.max(1, Number(navigator.hardwareConcurrency) || 1);
+  return Math.max(1, Math.floor(processors / 2));
+}
+
 function localizePage() {
   const token = /__MSG_([A-Za-z0-9_]+)__/g;
   const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
@@ -27,7 +32,7 @@ localizePage();
 
 async function load() {
   const listed = await messenger.accounts.list();
-  const stored = await messenger.storage.local.get(["accounts", "cache", "diagnosticLogging", "scanDownloads", "scanOutgoing", "cleanNotifications"]);
+  const stored = await messenger.storage.local.get(["accounts", "cache", "diagnosticLogging", "scanDownloads", "scanOutgoing", "cleanNotifications", "nativeWorkers"]);
   accounts = stored.accounts || {};
   const select = document.getElementById("account");
   for (const account of listed.filter(item => item.id)) {
@@ -43,6 +48,9 @@ async function load() {
   document.getElementById("scanDownloads").checked = stored.scanDownloads !== false;
   document.getElementById("scanOutgoing").checked = stored.scanOutgoing !== false;
   document.getElementById("cleanNotifications").checked = stored.cleanNotifications === true;
+  const workers = document.getElementById("nativeWorkers");
+  workers.max = maximumNativeWorkers();
+  workers.value = Math.max(1, Math.min(Number(workers.max), Number(stored.nativeWorkers) || 2));
   select.addEventListener("change", showAccount);
   showAccount();
 }
@@ -63,6 +71,7 @@ async function save() {
     scanDownloads: document.getElementById("scanDownloads").checked,
     scanOutgoing: document.getElementById("scanOutgoing").checked,
     cleanNotifications: document.getElementById("cleanNotifications").checked,
+    nativeWorkers: Math.max(1, Math.min(maximumNativeWorkers(), Number(document.getElementById("nativeWorkers").value) || 2)),
     cache: {
       ...(old.cache || {}),
       maxEntries: Math.max(0, Number(document.getElementById("maxEntries").value) || 0),

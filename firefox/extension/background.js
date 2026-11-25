@@ -3,8 +3,23 @@
 const NATIVE_HOST = "org.clamav.thunderbird";
 const message = (key, substitutions) => browser.i18n.getMessage(key, substitutions) || key;
 let nativePort = null;
-let nativeCurrent = null;
 const nativeQueue = [];
+const nativeRequests = new Map();
+let nativeRequestSequence = 0;
+let nativeWorkers = 2;
+
+function maximumNativeWorkers() {
+  const processors = Math.max(1, Number(navigator.hardwareConcurrency) || 1);
+  return Math.max(1, Math.floor(processors / 2));
+}
+
+function normalizeNativeWorkers(value) {
+  return Math.max(1, Math.min(maximumNativeWorkers(), Number(value) || 2));
+}
+
+browser.storage.local.get({ nativeWorkers: 2 }).then((settings) => {
+  nativeWorkers = normalizeNativeWorkers(settings.nativeWorkers);
+}).catch(() => {});
 const scannedDownloads = new Set();
 const uploadOverrides = new Map();
 const UPLOAD_OVERRIDE_TTL_MS = 15 * 60 * 1000;
@@ -29,6 +44,10 @@ browser.storage.onChanged.addListener((changes, areaName) => {
     uploadScanning = changes.uploadScanning.newValue !== false;
   if (areaName === "local" && changes.cleanNotifications)
     cleanNotifications = changes.cleanNotifications.newValue === true;
+  if (areaName === "local" && changes.nativeWorkers) {
+    nativeWorkers = normalizeNativeWorkers(changes.nativeWorkers.newValue);
+    pumpNativeQueue();
+  }
 });
 
 function notificationIcon(kind = "default") {
@@ -39,7 +58,7 @@ function notificationIcon(kind = "default") {
 }
 
 function pumpNativeQueue() {
-  if (nativeCurrent || nativeQueue.length === 0) return;
+  if (nativeQueue.length === 0 && nativeRequests.size === 0) return;
   if (!nativePort) {
     try {
       nativePort = browser.runtime.connectNative(NATIVE_HOST);
@@ -49,31 +68,36 @@ function pumpNativeQueue() {
       return;
     }
     nativePort.onMessage.addListener((message) => {
-      if (!nativeCurrent) return;
-      const request = nativeCurrent;
-      nativeCurrent = null;
+      const request = nativeRequests.get(message?.request_id);
+      if (!request) return;
+      nativeRequests.delete(message.request_id);
       request.resolve(message);
       pumpNativeQueue();
     });
     nativePort.onDisconnect.addListener(() => {
       const error = browser.runtime.lastError?.message || "ClamAV native host disconnected";
-      const request = nativeCurrent;
-      nativeCurrent = null;
+      const requests = Array.from(nativeRequests.values());
+      nativeRequests.clear();
       nativePort = null;
-      if (request) request.reject(new Error(error));
+      for (const request of requests) request.reject(new Error(error));
       pumpNativeQueue();
     });
   }
-  nativeCurrent = nativeQueue.shift();
-  try {
-      nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine,
-        component: "firefox", origin: nativeCurrent.origin, metadata: nativeCurrent.metadata });
-  } catch (error) {
-    const request = nativeCurrent;
-    nativeCurrent = null;
-    nativePort = null;
-    request.reject(error);
-    pumpNativeQueue();
+  while (nativeRequests.size < nativeWorkers && nativeQueue.length > 0) {
+    const request = nativeQueue.shift();
+    request.requestId = `scan-${++nativeRequestSequence}`;
+    nativeRequests.set(request.requestId, request);
+    try {
+      nativePort.postMessage({ request_id: request.requestId, path: request.path,
+        quarantine: request.quarantine, component: "firefox", origin: request.origin,
+        metadata: request.metadata, workers: nativeWorkers });
+    } catch (error) {
+      nativeRequests.delete(request.requestId);
+      nativePort = null;
+      request.reject(error);
+      pumpNativeQueue();
+      break;
+    }
   }
 }
 

@@ -51,12 +51,15 @@ per-user ClamAV quarantine used by Firefox; the original message is not changed
 unless the user chooses one of the message or attachment deletion actions.
 
 The native host is a persistent C program connection. Thunderbird uses
-`connectNative()` and serializes scan requests through one native-host process
-per Thunderbird background context. On Linux the host opens the attachment and passes
-the file descriptor directly to `clamd` using the Unix-socket `FILDES` protocol;
-it falls back to `clamscan` if the daemon socket is unavailable. The default
-Arch Linux socket is `/run/clamav/clamd.ctl`. Set `CLAMAV_CLAMD_SOCKET` when a
-different socket path is configured.
+`connectNative()` and allows a configurable number of scan requests in flight
+per background context; the default is two, with a limit of half the available
+CPU cores. The native host processes them with the same bounded worker queue.
+On Linux the host opens the attachment and passes
+the file descriptor directly to `clamd` using the Unix-socket `FILDES` protocol,
+and falls back to the `INSTREAM` protocol when FD passing is unavailable. The
+host reports a scanner-unavailable error when the daemon socket cannot be
+reached. The default Arch Linux socket is `/run/clamav/clamd.ctl`. Set
+`CLAMAV_CLAMD_SOCKET` when a different socket path is configured.
 
 The options page controls automatic scanning per Thunderbird account. The SHA-256 result cache has configurable maximum age and
 entry count, defaulting to 180 days or 1,000 entries. Only positive detections

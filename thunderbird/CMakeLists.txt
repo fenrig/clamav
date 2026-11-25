@@ -6,6 +6,8 @@ if(NOT C_LINUX)
     return()
 endif()
 
+find_package(Threads REQUIRED)
+
 # This is deliberately a separate, non-default target. It packages only the
 # WebExtension files and does not become part of the normal ClamAV build.
 set(CLAMAV_THUNDERBIRD_XPI
@@ -38,7 +40,8 @@ target_link_libraries(clamav-thunderbird-host
     PRIVATE
         clamav-quarantine
         JSONC::jsonc
-        OpenSSL::Crypto)
+        OpenSSL::Crypto
+        Threads::Threads)
 set_target_properties(clamav-thunderbird-host PROPERTIES
     COMPILE_FLAGS "${WARNCFLAGS}")
 

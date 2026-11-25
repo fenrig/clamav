@@ -3,8 +3,23 @@
 const NATIVE_HOST = "org.clamav.thunderbird";
 const message = (key, substitutions) => messenger.i18n.getMessage(key, substitutions) || key;
 let nativePort = null;
-let nativeCurrent = null;
 const nativeQueue = [];
+const nativeRequests = new Map();
+let nativeRequestSequence = 0;
+let nativeWorkers = 2;
+
+function maximumNativeWorkers() {
+  const processors = Math.max(1, Number(navigator.hardwareConcurrency) || 1);
+  return Math.max(1, Math.floor(processors / 2));
+}
+
+function normalizeNativeWorkers(value) {
+  return Math.max(1, Math.min(maximumNativeWorkers(), Number(value) || 2));
+}
+
+messenger.storage.local.get({ nativeWorkers: 2 }).then((settings) => {
+  nativeWorkers = normalizeNativeWorkers(settings.nativeWorkers);
+}).catch(() => {});
 let notificationSequence = 0;
 const messageNotificationTargets = new Map();
 
@@ -25,7 +40,7 @@ function createNotification(options, notificationId = null) {
 }
 
 function pumpNativeQueue() {
-  if (nativeCurrent || nativeQueue.length === 0) return;
+  if (nativeQueue.length === 0 && nativeRequests.size === 0) return;
   if (!nativePort) {
     try {
       nativePort = messenger.runtime.connectNative(NATIVE_HOST);
@@ -35,31 +50,36 @@ function pumpNativeQueue() {
       return;
     }
     nativePort.onMessage.addListener((message) => {
-      if (!nativeCurrent) return;
-      const request = nativeCurrent;
-      nativeCurrent = null;
+      const request = nativeRequests.get(message?.request_id);
+      if (!request) return;
+      nativeRequests.delete(message.request_id);
       request.resolve(message);
       pumpNativeQueue();
     });
     nativePort.onDisconnect.addListener(() => {
       const error = messenger.runtime.lastError?.message || "ClamAV native host disconnected";
-      const request = nativeCurrent;
-      nativeCurrent = null;
+      const requests = Array.from(nativeRequests.values());
+      nativeRequests.clear();
       nativePort = null;
-      if (request) request.reject(new Error(error));
+      for (const request of requests) request.reject(new Error(error));
       pumpNativeQueue();
     });
   }
-  nativeCurrent = nativeQueue.shift();
-  try {
-    nativePort.postMessage({ path: nativeCurrent.path, quarantine: nativeCurrent.quarantine,
-      component: "thunderbird", origin: nativeCurrent.origin, metadata: nativeCurrent.metadata });
-  } catch (error) {
-    const request = nativeCurrent;
-    nativeCurrent = null;
-    nativePort = null;
-    request.reject(error);
-    pumpNativeQueue();
+  while (nativeRequests.size < nativeWorkers && nativeQueue.length > 0) {
+    const request = nativeQueue.shift();
+    request.requestId = `scan-${++nativeRequestSequence}`;
+    nativeRequests.set(request.requestId, request);
+    try {
+      nativePort.postMessage({ request_id: request.requestId, path: request.path,
+        quarantine: request.quarantine, component: "thunderbird", origin: request.origin,
+        metadata: request.metadata, workers: nativeWorkers });
+    } catch (error) {
+      nativeRequests.delete(request.requestId);
+      nativePort = null;
+      request.reject(error);
+      pumpNativeQueue();
+      break;
+    }
   }
 }
 
@@ -155,6 +175,10 @@ loadDiagnosticLogging();
 messenger.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes.diagnosticLogging) {
     diagnosticLogging = changes.diagnosticLogging.newValue === true;
+  }
+  if (areaName === "local" && changes.nativeWorkers) {
+    nativeWorkers = normalizeNativeWorkers(changes.nativeWorkers.newValue);
+    pumpNativeQueue();
   }
 });
 
@@ -672,30 +696,35 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
   if (automatic && !account.autoScan) return 0;
   const full = await messenger.messages.getFull(messageId, { decodeContent: true });
   const parts = messageTextParts(full);
+  const pending = [];
+  const results = [];
   let scanned = 0;
   for (const [index, part] of parts.entries()) {
     const key = part.partName || `${MESSAGE_LINKS_PART}-${index}`;
-    logScan("scanning message text", { messageId, part: key, contentType: part.contentType, automatic, force });
     const contentType = part.contentType.toLowerCase().split(";", 1)[0];
     const file = new Blob([part.body], { type: contentType });
     const hash = await sha256(file);
     const cached = force ? null : await cachedResult(hash);
     const detection = { partName: key, name: "Message links", attachmentName: "Message links" };
     if (cached) {
-      logScan("message text result from cache", { messageId, part: key, infected: cached.infected });
-      await publishDetection(messageId, cached, detection);
-      await showResult(cached, automatic, detection.name, quiet, messageId);
-      scanned++;
+      results.push({ index, detection, result: cached, cached: true });
       continue;
     }
+    pending.push({ index, key, contentType, file, hash, detection });
+  }
+
+  const scannedResults = await Promise.all(pending.map(async item => {
+    logScan("scanning message text", {
+      messageId, part: item.key, contentType: item.contentType, automatic, force
+    });
 
     let downloadId;
     let objectUrl;
     try {
-      objectUrl = URL.createObjectURL(file);
+      objectUrl = URL.createObjectURL(item.file);
       downloadId = await messenger.downloads.download({
         url: objectUrl,
-        filename: `clamav-scan/message-${messageId}-${index}.${contentType === "text/plain" ? "txt" : "html"}`,
+        filename: `clamav-scan/message-${messageId}-${item.index}.${item.contentType === "text/plain" ? "txt" : "html"}`,
         saveAs: false,
         conflictAction: "uniquify"
       });
@@ -703,21 +732,39 @@ async function scanMessageLinks(messageId, accountId, automatic = false, force =
       const scan = await scanWithNativeHost(download.filename, false, await quarantineOrigin(messageId),
         await quarantineMetadata(messageId));
       if (!scan || scan.success === false) throw new Error(scan?.message || "ClamAV could not complete the scan");
-      await saveResult(hash, scan);
-      if (scan.infected) {
-        await publishDetection(messageId, scan, detection);
-      } else {
-        await clearMessageInfected(messageId, detection);
-      }
-      await showResult(scan, automatic, detection.name, quiet, messageId);
-      logScan("message text scan complete", { messageId, part: key, infected: scan.infected, sha256: scan.sha256 });
-      scanned++;
+      return { index: item.index, detection: item.detection, result: scan, hash: item.hash };
     } catch (error) {
-      await createNotification({ type: "basic", title: "ClamAV link scan failed", message: error.message });
+      return { index: item.index, error };
     } finally {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (downloadId !== undefined) await messenger.downloads.removeFile(downloadId).catch(() => {});
     }
+  }));
+  results.push(...scannedResults);
+  results.sort((left, right) => left.index - right.index);
+  for (const item of results) {
+    if (item.error) {
+      await createNotification({ type: "basic", title: "ClamAV link scan failed", message: item.error.message });
+      continue;
+    }
+    if (!item.cached) {
+      await saveResult(item.hash, item.result);
+      logScan("message text scan complete", {
+        messageId, part: item.detection.partName, infected: item.result.infected,
+        sha256: item.result.sha256
+      });
+    } else {
+      logScan("message text result from cache", {
+        messageId, part: item.detection.partName, infected: item.result.infected
+      });
+    }
+    if (item.result.infected) {
+      await publishDetection(messageId, item.result, item.detection);
+    } else {
+      await clearMessageInfected(messageId, item.detection);
+    }
+    await showResult(item.result, automatic, item.detection.name, quiet, messageId);
+    scanned++;
   }
   return scanned;
 }

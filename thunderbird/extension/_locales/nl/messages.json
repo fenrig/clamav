@@ -13,6 +13,7 @@
   "scanDownloads": {"message": "Bijlagen en koppelingen die naar schijf zijn opgeslagen automatisch scannen"},
   "scanOutgoing": {"message": "Waarschuwen voordat door ClamAV als gevaarlijk aangemerkte bijlagen worden verzonden"},
   "cleanNotifications": {"message": "Meldingen voor geslaagde scans tonen"},
+  "parallelScans": {"message": "Parallelle scans (1 tot de helft van de CPU-kernen)"},
   "outgoingWarning": {"message": "Waarschuwing voordat het bericht wordt verzonden"},
   "outgoingThreats": {"message": "ClamAV heeft een bedreiging gevonden in"},
   "outgoingScanIncomplete": {"message": "Scannen kon niet worden voltooid voor"},

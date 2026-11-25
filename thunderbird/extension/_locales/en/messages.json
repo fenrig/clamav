@@ -13,6 +13,7 @@
   "scanDownloads": {"message": "Scan attachments and links saved to disk automatically"},
   "scanOutgoing": {"message": "Warn before sending attachments ClamAV detects as dangerous"},
   "cleanNotifications": {"message": "Show successful scan notifications"},
+  "parallelScans": {"message": "Parallel scans (1 to half of CPU cores)"},
   "outgoingWarning": {"message": "Warning before sending message"},
   "outgoingThreats": {"message": "ClamAV detected a threat in"},
   "outgoingScanIncomplete": {"message": "Could not complete scanning"},

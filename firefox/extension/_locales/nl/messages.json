@@ -11,6 +11,8 @@
   "uploadScanningDescription": {"message": "Herkenbare bestandsuploads worden lokaal gecontroleerd. De eerste risicovolle upload wordt gepauzeerd; herhaal deze binnen 15 minuten om door te gaan."},
   "cleanNotifications": {"message": "Meldingen voor geslaagde scans tonen"},
   "cleanNotificationsDescription": {"message": "Toon een melding wanneer een download is gecontroleerd en er geen bedreiging is gevonden. Standaard uitgeschakeld."},
+  "parallelScans": {"message": "Parallelle scans"},
+  "parallelScansDescription": {"message": "Aantal bestanden dat tegelijk wordt gecontroleerd. Minimum 1; maximum de helft van de beschikbare CPU-kernen."},
   "settingsSaved": {"message": "Instellingen opgeslagen."},
   "settingsReadError": {"message": "Instellingen kunnen niet worden gelezen."},
   "settingsSaveError": {"message": "Instellingen kunnen niet worden opgeslagen."},

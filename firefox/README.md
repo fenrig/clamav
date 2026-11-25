@@ -2,7 +2,8 @@
 
 This WebExtension scans completed Firefox downloads through the shared ClamAV
 native-messaging host. It uses a persistent `connectNative()` connection and
-serializes requests through one native host process.
+allows a configurable number of scan requests in flight through one native
+host process. The default is two, capped at half the available CPU cores.
 
 The extension reports clean scans and scan failures using Firefox notifications.
 Automatic download scanning is enabled by default and can be changed from the

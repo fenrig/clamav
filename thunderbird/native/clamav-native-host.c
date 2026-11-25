@@ -3,13 +3,15 @@
  *
  * The browser protocol uses a little-endian uint32 length followed by a
  * UTF-8 JSON object.  ClamD scanning uses the local Unix-socket FILDES
- * protocol; clamscan is used only when the daemon is unavailable.
+ * protocol. Scanning is performed by the local ClamD daemon.
  */
 
 #include <errno.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <json-c/json.h>
 #include <openssl/evp.h>
+#include <pthread.h>
 #include "quarantine.h"
 #include <signal.h>
 #include <limits.h>
@@ -22,11 +24,14 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <stdint.h>
 #include <unistd.h>
 
 #define OUTPUT_LIMIT (1024 * 1024)
 
 #ifndef CLAMAV_SCANNER_NO_MAIN
+static pthread_mutex_t native_output_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static int read_all(void *buffer, size_t size)
 {
     size_t offset = 0;
@@ -67,7 +72,11 @@ static int send_json(struct json_object *object)
     header[1] = (unsigned char)((length >> 8) & 0xffU);
     header[2] = (unsigned char)((length >> 16) & 0xffU);
     header[3] = (unsigned char)((length >> 24) & 0xffU);
-    return write_all(header, sizeof(header)) && write_all(text, length);
+    int success;
+    pthread_mutex_lock(&native_output_mutex);
+    success = write_all(header, sizeof(header)) && write_all(text, length);
+    pthread_mutex_unlock(&native_output_mutex);
+    return success;
 }
 #endif
 
@@ -236,28 +245,50 @@ static int read_clamd_reply(int sockfd, char **reply)
     return *reply != NULL;
 }
 
-#ifdef CLAMAV_SCANNER_CLAMD_ONLY
-static int clamd_ping(void)
+static int connect_clamd(void)
 {
     struct sockaddr_un address;
-    char command[] = "zPING";
     char socket_path[sizeof(address.sun_path)];
+    int sockfd;
+
+    if (!clamd_socket_path(socket_path))
+        return -1;
+    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sockfd < 0)
+        return -1;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    strcpy(address.sun_path, socket_path);
+    if (connect(sockfd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(sockfd);
+        return -1;
+    }
+    return sockfd;
+}
+
+static int clamd_result(const char *reply)
+{
+    if (strstr(reply, " FOUND") != NULL)
+        return 1;
+    if (strstr(reply, " OK") != NULL)
+        return 0;
+    return 2;
+}
+
+#ifdef CLAMAV_SCANNER_NO_MAIN
+static int clamd_ping(void)
+{
+    char command[] = "zPING";
     char *reply = NULL;
     int sockfd;
     int result = 0;
     struct timeval timeout = {1, 0};
 
-    if (!clamd_socket_path(socket_path))
-        return 0;
-    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    sockfd = connect_clamd();
     if (sockfd < 0)
         return 0;
-    memset(&address, 0, sizeof(address));
-    address.sun_family = AF_UNIX;
-    strcpy(address.sun_path, socket_path);
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    if (connect(sockfd, (struct sockaddr *)&address, sizeof(address)) == 0
-            && send_socket_data(sockfd, command, sizeof(command))
+    if (send_socket_data(sockfd, command, sizeof(command))
             && read_clamd_reply(sockfd, &reply))
         result = reply != NULL && strstr(reply, "PONG") != NULL;
     free(reply);
@@ -268,31 +299,18 @@ static int clamd_ping(void)
 
 static int scan_with_clamd(int fd, char **reply)
 {
-    struct sockaddr_un address;
     struct iovec iov;
     struct msghdr message;
     struct cmsghdr *control;
     unsigned char control_buffer[CMSG_SPACE(sizeof(int))];
     char dummy = 0;
     char command[] = "zFILDES";
-    char socket_path[sizeof(address.sun_path)];
     int sockfd;
-    int connect_result;
 
-    if (!clamd_socket_path(socket_path))
-        return -1;
-    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    sockfd = connect_clamd();
     if (sockfd < 0)
         return -1;
-    memset(&address, 0, sizeof(address));
-    address.sun_family = AF_UNIX;
-    strcpy(address.sun_path, socket_path);
-    connect_result = connect(sockfd, (struct sockaddr *)&address, sizeof(address));
-    if (connect_result != 0 || !send_socket_data(sockfd, command, sizeof(command))) {
-        close(sockfd);
-        return -1;
-    }
-    if (lseek(fd, 0, SEEK_SET) < 0) {
+    if (!send_socket_data(sockfd, command, sizeof(command))) {
         close(sockfd);
         return -1;
     }
@@ -314,75 +332,56 @@ static int scan_with_clamd(int fd, char **reply)
         return -1;
     }
     close(sockfd);
-    return strstr(*reply, "FOUND") != NULL ? 1 : (strstr(*reply, "OK") != NULL ? 0 : 2);
+    return clamd_result(*reply);
 }
 
-#ifndef CLAMAV_SCANNER_CLAMD_ONLY
-static int append_output(char **output, size_t *length, const char *data, size_t count)
+static int scan_with_clamd_instream(int fd, char **reply)
 {
-    char *replacement;
-    size_t accepted = count;
-
-    if (*length >= OUTPUT_LIMIT)
-        return 1;
-    if (accepted > OUTPUT_LIMIT - *length)
-        accepted = OUTPUT_LIMIT - *length;
-    replacement = (char *)realloc(*output, *length + accepted + 1);
-    if (replacement == NULL)
-        return 0;
-    memcpy(replacement + *length, data, accepted);
-    *length += accepted;
-    replacement[*length] = '\0';
-    *output = replacement;
-    return 1;
-}
-
-static int run_command(char *const argv[], char **output)
-{
-    int pipefd[2];
-    pid_t child;
-    int status;
-    char buffer[4096];
+    char command[] = "zINSTREAM";
+    unsigned char buffer[65536];
+    int sockfd;
     ssize_t count;
-    size_t length = 0;
+    uint32_t chunk_length;
 
-    *output = NULL;
-    if (pipe(pipefd) != 0)
+    *reply = NULL;
+    sockfd = connect_clamd();
+    if (sockfd < 0)
         return -1;
-    child = fork();
-    if (child < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+    if (!send_socket_data(sockfd, command, sizeof(command))) {
+        close(sockfd);
         return -1;
     }
-    if (child == 0) {
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[1]);
-        execvp(argv[0], argv);
-        _exit(127);
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        close(sockfd);
+        return -1;
     }
-    close(pipefd[1]);
-    while ((count = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-        if (!append_output(output, &length, buffer, (size_t)count)) {
-            close(pipefd[0]);
-            kill(child, SIGKILL);
-            waitpid(child, NULL, 0);
-            free(*output);
-            *output = NULL;
+    for (;;) {
+        count = read(fd, buffer, sizeof(buffer));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count < 0) {
+            close(sockfd);
+            return -1;
+        }
+        chunk_length = htonl((uint32_t)count);
+        if (!send_socket_data(sockfd, &chunk_length, sizeof(chunk_length))) {
+            close(sockfd);
+            return -1;
+        }
+        if (count == 0)
+            break;
+        if (!send_socket_data(sockfd, buffer, (size_t)count)) {
+            close(sockfd);
             return -1;
         }
     }
-    close(pipefd[0]);
-    if (waitpid(child, &status, 0) < 0 || !WIFEXITED(status)) {
-        free(*output);
-        *output = NULL;
+    if (!read_clamd_reply(sockfd, reply)) {
+        close(sockfd);
         return -1;
     }
-    return WEXITSTATUS(status);
+    close(sockfd);
+    return clamd_result(*reply);
 }
-#endif
 
 static char *replace_text(const char *text, const char *needle, const char *replacement)
 {
@@ -433,7 +432,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     char *details = NULL;
     char *message = NULL;
     const char *display_name;
-    int used_clamd;
+    const char *scan_transport;
     int result;
     int quarantined = 0;
     int quarantine_pending = 0;
@@ -441,9 +440,6 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     char quarantine_path[PATH_MAX];
     char quarantine_id[CLAMAV_QUARANTINE_ID_LENGTH];
     struct clamav_quarantine_metadata quarantine_metadata;
-#ifndef CLAMAV_SCANNER_CLAMD_ONLY
-    char *clam[] = { (char *)"clamscan", (char *)"--infected", (char *)"--alert-broken-media=no", (char *)path, NULL };
-#endif
     struct json_object *response;
 
     display_name = strrchr(path, '/');
@@ -455,30 +451,19 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         return failure("Unable to read attachment", NULL);
     }
 
+    scan_transport = "FILDES";
     result = scan_with_clamd(file_fd, &output);
+    if (result != 0 && result != 1) {
+        free(output);
+        output = NULL;
+        scan_transport = "INSTREAM";
+        result = scan_with_clamd_instream(file_fd, &output);
+    }
     close(file_fd);
-    used_clamd = result >= 0;
-#ifdef CLAMAV_SCANNER_CLAMD_ONLY
     if (result < 0) {
         free(output);
         return failure("ClamD is unavailable", sha256);
     }
-#else
-    if (result < 0)
-        result = run_command(clam, &output);
-#endif
-    if (result < 0)
-        return failure("Unable to start ClamAV", sha256);
-    if (result == 127)
-        return failure("Unable to start ClamAV", sha256);
-#ifndef CLAMAV_SCANNER_CLAMD_ONLY
-    if (output != NULL && strstr(output, "Broken.Media") != NULL && result == 1) {
-        free(output);
-        output = NULL;
-        result = run_command(clam, &output);
-        used_clamd = 0;
-    }
-#endif
     if (strstr(output == NULL ? "" : output, " FOUND") != NULL)
         result = 1;
     if (strstr(output == NULL ? "" : output, " OK") != NULL)
@@ -491,39 +476,22 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
             close(file_fd);
         }
     }
-    if (!used_clamd) {
-        details = replace_text(output == NULL ? "none" : output, path, display_name);
-        if (details == NULL)
-            details = strdup("none");
-        {
-            const size_t hash_length = sha256[0] == '\0' ? 0 : strlen("\nSHA-256: ") + 64;
-            size_t size = strlen(details) + hash_length + strlen("\nScanner: clamscan") + 1;
-            char *expanded = (char *)malloc(size);
-            if (expanded != NULL) {
-                if (sha256[0] != '\0')
-                    sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamscan", details, sha256);
-                else
-                    sprintf(expanded, "%s\nScanner: clamscan", details);
-                free(details);
-                details = expanded;
-            }
-        }
-    } else {
-        details = replace_text(output == NULL ? "none" : output, path, display_name);
-        if (details == NULL)
-            details = strdup("none");
-        {
-            const size_t hash_length = sha256[0] == '\0' ? 0 : strlen("\nSHA-256: ") + 64;
-            size_t size = strlen(details) + hash_length + strlen("\nScanner: clamd (FILDES)") + 1;
-            char *expanded = (char *)malloc(size);
-            if (expanded != NULL) {
-                if (sha256[0] != '\0')
-                    sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamd (FILDES)", details, sha256);
-                else
-                    sprintf(expanded, "%s\nScanner: clamd (FILDES)", details);
-                free(details);
-                details = expanded;
-            }
+    details = replace_text(output == NULL ? "none" : output, path, display_name);
+    if (details == NULL)
+        details = strdup("none");
+    {
+        const size_t hash_length = sha256[0] == '\0' ? 0 : strlen("\nSHA-256: ") + 64;
+        size_t size = strlen(details) + hash_length + strlen("\nScanner: clamd ()")
+            + strlen(scan_transport) + 1;
+        char *expanded = (char *)malloc(size);
+        if (expanded != NULL) {
+            if (sha256[0] != '\0')
+                sprintf(expanded, "%s\nSHA-256: %s\nScanner: clamd (%s)", details, sha256,
+                        scan_transport);
+            else
+                sprintf(expanded, "%s\nScanner: clamd (%s)", details, scan_transport);
+            free(details);
+            details = expanded;
         }
     }
     free(output);
@@ -600,8 +568,8 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     json_object_object_add(response, "infected", json_object_new_boolean(result == 1));
     json_object_object_add(response, "message", json_object_new_string(message));
     json_object_object_add(response, "sha256", json_object_new_string(sha256));
-    json_object_object_add(response, "scanner",
-                           json_object_new_string(used_clamd ? "clamd" : "clamscan"));
+    json_object_object_add(response, "scanner", json_object_new_string("clamd"));
+    json_object_object_add(response, "transport", json_object_new_string(scan_transport));
     if (quarantine && result == 1)
         json_object_object_add(response, "quarantined", json_object_new_boolean(quarantined));
     if (quarantine && result == 1)
@@ -616,12 +584,55 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
 }
 
 #ifndef CLAMAV_SCANNER_NO_MAIN
-int main(void)
-{
-    unsigned char header[4];
-    unsigned int length;
-    char *buffer;
+struct native_request {
     struct json_object *request;
+    struct native_request *next;
+};
+
+static struct native_request *native_queue_head;
+static struct native_request *native_queue_tail;
+static int native_shutting_down;
+static int native_worker_target = 2;
+static pthread_mutex_t native_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t native_queue_condition = PTHREAD_COND_INITIALIZER;
+
+static int available_native_workers(void)
+{
+    long processors = sysconf(_SC_NPROCESSORS_ONLN);
+    int maximum = processors > 1 ? (int)(processors / 2) : 1;
+    return maximum < 1 ? 1 : maximum;
+}
+
+static void update_native_workers(struct json_object *request)
+{
+    struct json_object *workers_object;
+    int workers;
+    int maximum;
+
+    if (!json_object_object_get_ex(request, "workers", &workers_object)
+            || !json_object_is_type(workers_object, json_type_int))
+        return;
+    workers = json_object_get_int(workers_object);
+    maximum = available_native_workers();
+    if (workers < 1)
+        workers = 1;
+    if (workers > maximum)
+        workers = maximum;
+    pthread_mutex_lock(&native_queue_mutex);
+    native_worker_target = workers;
+    pthread_cond_broadcast(&native_queue_condition);
+    pthread_mutex_unlock(&native_queue_mutex);
+}
+
+static void add_request_id(struct json_object *response, struct json_object *request)
+{
+    struct json_object *request_id;
+    if (json_object_object_get_ex(request, "request_id", &request_id))
+        json_object_object_add(response, "request_id", json_object_get(request_id));
+}
+
+static struct json_object *process_request(struct json_object *request)
+{
     struct json_object *path_object;
     struct json_object *quarantine_object;
     struct json_object *component_object;
@@ -630,13 +641,129 @@ int main(void)
     struct json_object *command_object;
     struct json_object *response;
     const char *path;
-    int quarantine;
+    int quarantine = 0;
+    const char *component = "unknown";
+    const char *origin = "";
+    const char *metadata_json = "{}";
     int launched;
-    const char *component;
-    const char *origin;
-    const char *metadata_json;
+
+    update_native_workers(request);
+
+    if (json_object_object_get_ex(request, "command", &command_object)
+            && json_object_is_type(command_object, json_type_string)
+            && strcmp(json_object_get_string(command_object), "open_quarantine") == 0) {
+        launched = launch_quarantine_manager();
+        response = launched ? json_object_new_object()
+                            : failure("Unable to open the quarantine manager", NULL);
+        if (launched)
+            json_object_object_add(response, "success", json_object_new_boolean(1));
+        add_request_id(response, request);
+        return response;
+    }
+    if (!json_object_object_get_ex(request, "path", &path_object)
+            || !json_object_is_type(path_object, json_type_string)) {
+        response = failure("Invalid scan request", NULL);
+        add_request_id(response, request);
+        return response;
+    }
+    path = json_object_get_string(path_object);
+    if (json_object_object_get_ex(request, "quarantine", &quarantine_object)
+            && json_object_is_type(quarantine_object, json_type_boolean))
+        quarantine = json_object_get_boolean(quarantine_object);
+    if (json_object_object_get_ex(request, "component", &component_object)
+            && json_object_is_type(component_object, json_type_string))
+        component = json_object_get_string(component_object);
+    if (json_object_object_get_ex(request, "origin", &origin_object)
+            && json_object_is_type(origin_object, json_type_string))
+        origin = json_object_get_string(origin_object);
+    if (json_object_object_get_ex(request, "metadata", &metadata_object)
+            && json_object_is_type(metadata_object, json_type_object))
+        metadata_json = json_object_to_json_string_ext(metadata_object, JSON_C_TO_STRING_PLAIN);
+    response = scan_file(path, quarantine, component, origin, metadata_json, 1);
+    add_request_id(response, request);
+    return response;
+}
+
+static void *native_worker(void *argument)
+{
+    const int worker_id = *(const int *)argument;
+    struct native_request *request;
+    struct json_object *response;
+    for (;;) {
+        pthread_mutex_lock(&native_queue_mutex);
+        while (!native_shutting_down
+                && (native_queue_head == NULL || worker_id >= native_worker_target))
+            pthread_cond_wait(&native_queue_condition, &native_queue_mutex);
+        if (native_shutting_down && native_queue_head == NULL) {
+            pthread_mutex_unlock(&native_queue_mutex);
+            break;
+        }
+        request = native_queue_head;
+        native_queue_head = request->next;
+        if (native_queue_head == NULL)
+            native_queue_tail = NULL;
+        pthread_mutex_unlock(&native_queue_mutex);
+
+        response = process_request(request->request);
+        json_object_put(request->request);
+        free(request);
+        send_json(response);
+        json_object_put(response);
+    }
+    return NULL;
+}
+
+static int enqueue_request(struct json_object *request)
+{
+    struct native_request *item = (struct native_request *)malloc(sizeof(*item));
+    if (item == NULL)
+        return 0;
+    item->request = request;
+    item->next = NULL;
+    pthread_mutex_lock(&native_queue_mutex);
+    if (native_queue_tail == NULL)
+        native_queue_head = item;
+    else
+        native_queue_tail->next = item;
+    native_queue_tail = item;
+    pthread_cond_signal(&native_queue_condition);
+    pthread_mutex_unlock(&native_queue_mutex);
+    return 1;
+}
+
+int main(void)
+{
+    unsigned char header[4];
+    unsigned int length;
+    char *buffer;
+    struct json_object *request;
+    struct json_object *response;
+    pthread_t *workers;
+    int *worker_ids;
+    int worker_count = 0;
+    int i;
+    const int worker_limit = available_native_workers();
 
     signal(SIGPIPE, SIG_IGN);
+    workers = (pthread_t *)calloc((size_t)worker_limit, sizeof(*workers));
+    worker_ids = (int *)malloc((size_t)worker_limit * sizeof(*worker_ids));
+    if (workers == NULL || worker_ids == NULL) {
+        free(workers);
+        free(worker_ids);
+        return 2;
+    }
+    native_worker_target = worker_limit < 2 ? worker_limit : 2;
+    for (i = 0; i < worker_limit; ++i) {
+        worker_ids[worker_count] = i;
+        if (pthread_create(&workers[worker_count], NULL, native_worker, &worker_ids[worker_count]) != 0)
+            break;
+        ++worker_count;
+    }
+    if (worker_count == 0) {
+        free(workers);
+        free(worker_ids);
+        return 2;
+    }
     for (;;) {
         if (!read_all(header, sizeof(header)))
             break;
@@ -661,44 +788,32 @@ int main(void)
         free(buffer);
         if (request == NULL) {
             response = failure("Invalid scan request", NULL);
-        } else if (json_object_object_get_ex(request, "command", &command_object)
-                && json_object_is_type(command_object, json_type_string)
-                && strcmp(json_object_get_string(command_object), "open_quarantine") == 0) {
-            launched = launch_quarantine_manager();
-            response = launched ? json_object_new_object() : failure("Unable to open the quarantine manager", NULL);
-            if (launched)
-                json_object_object_add(response, "success", json_object_new_boolean(1));
-        } else if (!json_object_object_get_ex(request, "path", &path_object)
-                || !json_object_is_type(path_object, json_type_string)) {
-            response = failure("Invalid scan request", NULL);
-        } else {
-            path = json_object_get_string(path_object);
-            quarantine = 0;
-            component = "unknown";
-            origin = "";
-            metadata_json = "{}";
-            if (json_object_object_get_ex(request, "quarantine", &quarantine_object)
-                    && json_object_is_type(quarantine_object, json_type_boolean))
-                quarantine = json_object_get_boolean(quarantine_object);
-            if (json_object_object_get_ex(request, "component", &component_object)
-                    && json_object_is_type(component_object, json_type_string))
-                component = json_object_get_string(component_object);
-            if (json_object_object_get_ex(request, "origin", &origin_object)
-                    && json_object_is_type(origin_object, json_type_string))
-                origin = json_object_get_string(origin_object);
-            if (json_object_object_get_ex(request, "metadata", &metadata_object)
-                    && json_object_is_type(metadata_object, json_type_object))
-                metadata_json = json_object_to_json_string_ext(metadata_object, JSON_C_TO_STRING_PLAIN);
-            response = scan_file(path, quarantine, component, origin, metadata_json, 1);
-        }
-        if (request != NULL)
-            json_object_put(request);
-        if (!send_json(response)) {
+            if (!send_json(response)) {
+                json_object_put(response);
+                break;
+            }
             json_object_put(response);
-            break;
+        } else if (!enqueue_request(request)) {
+            response = failure("Unable to queue scan request", NULL);
+            add_request_id(response, request);
+            json_object_put(request);
+            if (!send_json(response)) {
+                json_object_put(response);
+                break;
+            }
+            json_object_put(response);
+        } else {
+            continue;
         }
-        json_object_put(response);
     }
+    pthread_mutex_lock(&native_queue_mutex);
+    native_shutting_down = 1;
+    pthread_cond_broadcast(&native_queue_condition);
+    pthread_mutex_unlock(&native_queue_mutex);
+    for (i = 0; i < worker_count; ++i)
+        pthread_join(workers[i], NULL);
+    free(workers);
+    free(worker_ids);
     return 0;
 }
 #endif

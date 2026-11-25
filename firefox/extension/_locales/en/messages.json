@@ -11,6 +11,8 @@
   "uploadScanningDescription": {"message": "Recognizable file uploads are checked locally. The first risky upload is paused; repeat it within 15 minutes to continue."},
   "cleanNotifications": {"message": "Show successful scan notifications"},
   "cleanNotificationsDescription": {"message": "Show a notification when a download was checked and no threat was found. Disabled by default."},
+  "parallelScans": {"message": "Parallel scans"},
+  "parallelScansDescription": {"message": "Number of files scanned at once. Minimum 1; maximum is half of the available CPU cores."},
   "settingsSaved": {"message": "Settings saved."},
   "settingsReadError": {"message": "Unable to read settings."},
   "settingsSaveError": {"message": "Unable to save settings."},

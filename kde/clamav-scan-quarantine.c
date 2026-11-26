@@ -9,8 +9,6 @@
 #include <sys/select.h>
 #include <time.h>
 
-#define MAX_SCAN_WORKERS 32
-
 static char **scan_paths;
 static size_t scan_path_count;
 static size_t next_scan_path;
@@ -22,14 +20,16 @@ static int completed_scan_files;
 static int failed_scan_files;
 static int infected_scan_files;
 static int skipped_scan_files;
+static size_t prepared_scan_files;
 static char **skipped_paths;
 static char **skipped_reasons;
 static size_t skipped_path_count;
 static pthread_mutex_t scan_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t scan_condition = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t output_mutex = PTHREAD_MUTEX_INITIALIZER;
-static char *active_paths[MAX_SCAN_WORKERS];
-static struct timespec active_started[MAX_SCAN_WORKERS];
+static char **active_paths;
+static struct timespec *active_started;
+static int scan_worker_capacity;
 
 static void print_event(struct json_object *event)
 {
@@ -47,6 +47,15 @@ static void emit_scan_started(void)
     json_object_object_add(event, "total", json_object_new_int64(
         (int64_t)(scan_path_count + skipped_path_count)));
     json_object_object_add(event, "workers", json_object_new_int(scan_workers));
+    print_event(event);
+}
+
+static void emit_scan_preparing(const char *path)
+{
+    struct json_object *event = json_object_new_object();
+    json_object_object_add(event, "event", json_object_new_string("scan_preparing"));
+    json_object_object_add(event, "path", json_object_new_string(path));
+    json_object_object_add(event, "discovered", json_object_new_int64((int64_t)prepared_scan_files));
     print_event(event);
 }
 
@@ -117,8 +126,6 @@ static int available_scan_workers(void)
 {
     long processors = sysconf(_SC_NPROCESSORS_ONLN);
     int maximum = processors > 1 ? (int)(processors / 2) : 1;
-    if (maximum > MAX_SCAN_WORKERS)
-        maximum = MAX_SCAN_WORKERS;
     return maximum < 1 ? 1 : maximum;
 }
 
@@ -206,10 +213,17 @@ static void *scan_heartbeat(void *unused)
     for (;;) {
         struct timespec delay;
         struct timespec now;
-        char *paths[MAX_SCAN_WORKERS];
-        double elapsed[MAX_SCAN_WORKERS];
+        char **paths;
+        double *elapsed;
         int count = 0;
         int i;
+        paths = calloc((size_t)scan_worker_capacity, sizeof(*paths));
+        elapsed = calloc((size_t)scan_worker_capacity, sizeof(*elapsed));
+        if (paths == NULL || elapsed == NULL) {
+            free(paths);
+            free(elapsed);
+            return NULL;
+        }
         delay.tv_sec = 1;
         delay.tv_nsec = 0;
         nanosleep(&delay, NULL);
@@ -219,7 +233,7 @@ static void *scan_heartbeat(void *unused)
             pthread_mutex_unlock(&scan_mutex);
             break;
         }
-        for (i = 0; i < MAX_SCAN_WORKERS; ++i) {
+        for (i = 0; i < scan_worker_capacity; ++i) {
             if (active_paths[i] != NULL && (paths[count] = strdup(active_paths[i])) != NULL) {
                 elapsed[count] = (double)(now.tv_sec - active_started[i].tv_sec)
                     + (double)(now.tv_nsec - active_started[i].tv_nsec) / 1000000000.0;
@@ -236,6 +250,8 @@ static void *scan_heartbeat(void *unused)
             print_event(event);
             free(paths[i]);
         }
+        free(paths);
+        free(elapsed);
     }
     return NULL;
 }
@@ -346,6 +362,9 @@ static int scan_tree(const char *path, const struct stat *status,
         if (scan_paths[scan_path_count] == NULL)
             return 1;
         ++scan_path_count;
+        ++prepared_scan_files;
+        if ((prepared_scan_files % 256) == 0)
+            emit_scan_preparing(path);
     } else if (type == FTW_DNR || type == FTW_NS) {
         record_skipped(path, type == FTW_DNR ? "directory_unreadable" : "path_unavailable");
     }
@@ -381,12 +400,13 @@ static void free_scan_plan(void)
 int main(int argc, char **argv)
 {
     int i, first_path = 1;
-    pthread_t workers[MAX_SCAN_WORKERS], control, heartbeat;
-    int worker_ids[MAX_SCAN_WORKERS];
+    pthread_t *workers, control, heartbeat;
+    int *worker_ids;
     int worker_count;
     int control_created = 0;
     int heartbeat_created = 0;
     int clamd_available;
+    int worker_limit;
     quarantine_mode = 0;
     if (argc > 1 && strcmp(argv[1], "--quarantine") == 0) {
         quarantine_mode = 1;
@@ -406,6 +426,7 @@ int main(int argc, char **argv)
         scan_workers = available_scan_workers();
     if (argc <= first_path)
         return 2;
+    emit_scan_preparing("Preparing scan locations");
     for (i = first_path; i < argc; ++i) {
         struct stat status;
         if (stat(argv[i], &status) != 0) {
@@ -424,7 +445,7 @@ int main(int argc, char **argv)
                                      (scan_paths[scan_path_count] = strdup(argv[i])) == NULL))
                 scan_status = 2;
             else
-                ++scan_path_count;
+                ++scan_path_count, ++prepared_scan_files;
         } else {
             record_skipped(argv[i], "unsupported_target");
             scan_status = 2;
@@ -451,7 +472,21 @@ int main(int argc, char **argv)
     }
     if (scan_path_count == 0)
         scan_stop = 1;
-    worker_count = MAX_SCAN_WORKERS;
+    worker_limit = available_scan_workers();
+    scan_worker_capacity = worker_limit;
+    active_paths = calloc((size_t)worker_limit, sizeof(*active_paths));
+    active_started = calloc((size_t)worker_limit, sizeof(*active_started));
+    workers = calloc((size_t)worker_limit, sizeof(*workers));
+    worker_ids = malloc((size_t)worker_limit * sizeof(*worker_ids));
+    if (active_paths == NULL || active_started == NULL || workers == NULL || worker_ids == NULL) {
+        free(active_paths);
+        free(active_started);
+        free(workers);
+        free(worker_ids);
+        free_scan_plan();
+        return 2;
+    }
+    worker_count = worker_limit;
     for (i = 0; i < worker_count; ++i) {
         worker_ids[i] = i;
         if (pthread_create(&workers[i], NULL, scan_worker, &worker_ids[i]) != 0) {
@@ -481,6 +516,10 @@ int main(int argc, char **argv)
         pthread_join(control, NULL);
     if (heartbeat_created)
         pthread_join(heartbeat, NULL);
+    free(active_paths);
+    free(active_started);
+    free(workers);
+    free(worker_ids);
     free_scan_plan();
     return scan_status;
 }

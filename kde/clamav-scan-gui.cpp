@@ -87,7 +87,7 @@ static QString detectionLevelLabel(int level)
 static int maximumParallelScans()
 {
     const int processors = std::max(1, QThread::idealThreadCount());
-    return std::max(1, std::min(32, processors / 2));
+    return std::max(1, processors / 2);
 }
 
 static QColor detectionLevelColor(int level)
@@ -587,6 +587,12 @@ public:
         connect(process_, &QProcess::readyReadStandardError, this, [this] { readOutput(); });
         connect(process_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus) { scanFinished(code); });
+        connect(process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+            if (error == QProcess::FailedToStart && !finished_) {
+                scanFailureReason_ = process_->errorString();
+                scanFinished(127);
+            }
+        });
         connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
         metricsTimer_.start(30000);
         connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
@@ -1309,7 +1315,7 @@ private:
     void readOutput()
     {
         outputBuffer_ += process_->readAllStandardOutput();
-        outputBuffer_ += process_->readAllStandardError();
+        errorBuffer_ += process_->readAllStandardError();
         if (!outputBuffer_.isEmpty()) {
             bool detectionsChanged = false;
             const bool activityVisible = tabs_ && tabs_->currentWidget() == scanPage_;
@@ -1325,7 +1331,8 @@ private:
                         continue;
                     const QJsonObject event = eventDocument.object();
                     const QString eventName = event.value(QStringLiteral("event")).toString();
-                    if (eventName == QStringLiteral("file_started")
+                    if (eventName == QStringLiteral("scan_preparing")
+                            || eventName == QStringLiteral("file_started")
                             || eventName == QStringLiteral("file_progress")
                             || eventName == QStringLiteral("file_result")) {
                         lastScanEvent_ = std::chrono::steady_clock::now();
@@ -1340,6 +1347,10 @@ private:
                         scanInfectedCount_ = event.value(QStringLiteral("infected")).toInt();
                         scanSkippedCount_ = event.value(QStringLiteral("skipped")).toInt();
                         continue;
+                    } else if (eventName == QStringLiteral("scan_preparing")) {
+                        currentFile_ = event.value(QStringLiteral("path")).toString();
+                        summary_->setText(tr("Preparing scan… (%1 files discovered)")
+                                              .arg(event.value(QStringLiteral("discovered")).toInt()));
                     } else if (eventName == QStringLiteral("scan_started")) {
                         line = QStringLiteral("SCAN_TOTAL: %1").arg(event.value(QStringLiteral("total")).toInt());
                     } else if (eventName == QStringLiteral("file_started")) {
@@ -1485,6 +1496,15 @@ private:
                 refreshDetectionsIfVisible();
                 updateStatusCard();
             }
+        }
+        while (true) {
+            const int lineEnd = errorBuffer_.indexOf('\n');
+            if (lineEnd < 0)
+                break;
+            const QString line = QString::fromLocal8Bit(errorBuffer_.left(lineEnd)).trimmed();
+            errorBuffer_.remove(0, lineEnd + 1);
+            if (!line.isEmpty() && scanFailureReason_.isEmpty())
+                scanFailureReason_ = line;
         }
     }
 
@@ -1828,6 +1848,8 @@ private:
 
     void scanFinished(int exitCode)
     {
+        if (finished_)
+            return;
         readOutput();
         metricsTimer_.stop();
         statsTimer_.stop();
@@ -2187,6 +2209,7 @@ private:
     QString currentFile_;
     double currentFileElapsedSeconds_ = 0.0;
     QByteArray outputBuffer_;
+    QByteArray errorBuffer_;
     QHash<QString, int> activityIndices_;
     int totalFiles_ = 0;
     int completedFiles_ = 0;

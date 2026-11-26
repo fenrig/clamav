@@ -436,6 +436,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
     int result;
     int quarantined = 0;
     int quarantine_pending = 0;
+    int quarantine_skipped = 0;
     char quarantine_reason[CLAMAV_QUARANTINE_REASON_LENGTH] = "";
     char quarantine_path[PATH_MAX];
     char quarantine_id[CLAMAV_QUARANTINE_ID_LENGTH];
@@ -522,6 +523,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
         quarantine_metadata.metadata_json = metadata_json;
         {
             if (!clamav_quarantine_preflight(path, sha256, 1, quarantine_reason)) {
+                quarantine_skipped = 1;
                 quarantine_pending = clamav_quarantine_record_pending(
                     path, &quarantine_metadata,
                     quarantine_reason, quarantine_id);
@@ -554,7 +556,7 @@ static struct json_object *scan_file(const char *path, int quarantine, const cha
                 message = expanded;
                 sprintf(message + old_length, "\n\nQuarantined: %s", quarantine_path);
             }
-        } else {
+        } else if (!quarantine_skipped) {
             size_t old_length = strlen(message);
             char *expanded = (char *)realloc(message, old_length + strlen("\n\nQuarantine failed") + 1);
             if (expanded != NULL) {

@@ -72,11 +72,10 @@ cleanup() {
 trap 'cleanup' EXIT
 trap 'cancelled=true; stop_scan; exit 130' HUP INT TERM
 
-scanner=clamscan
-scanner_is_daemon=false
-if command -v clamdscan >/dev/null 2>&1 && clamdscan --ping 1 >/dev/null 2>&1; then
-    scanner=clamdscan
-    scanner_is_daemon=true
+scanner=clamdscan
+if ! command -v "$scanner" >/dev/null 2>&1 || ! "$scanner" --ping 1 >/dev/null 2>&1; then
+    printf '%s\n' "ClamD is unavailable; start clamav-daemon and try again." >&2
+    exit 2
 fi
 
 # Prefer the compiled Qt interface on KDE. The shell/KDialog implementation
@@ -88,11 +87,7 @@ fi
 
 # Keep paths as separate arguments.  In particular, do not use `sh -c` or
 # word splitting here: filenames selected in Dolphin are user-controlled.
-if [ "$scanner_is_daemon" = true ]; then
-    "$scanner" --multiscan --infected "$@" >"$result_file" 2>&1 &
-else
-    "$scanner" --infected "$@" >"$result_file" 2>&1 &
-fi
+"$scanner" --multiscan --infected "$@" >"$result_file" 2>&1 &
 scan_pid=$!
 
 # KDialog exposes a D-Bus cancellation method. Zenity's Cancel button is

@@ -83,7 +83,7 @@ fi
 # remains the fallback on systems built without Qt6.
 if [ "$dialog" = kdialog ] && command -v clamav-scan-gui >/dev/null 2>&1; then
     rm -f "$result_file"
-    exec clamav-scan-gui --scanner "$scanner" "$@"
+    exec clamav-scan-gui "$@"
 fi
 
 # Keep paths as separate arguments.  In particular, do not use `sh -c` or

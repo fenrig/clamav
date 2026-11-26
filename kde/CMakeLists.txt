@@ -9,7 +9,14 @@ endif()
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Network)
 find_package(Threads REQUIRED)
 if(Qt6_FOUND)
-    find_program(CLAMAV_LRELEASE_EXECUTABLE lrelease REQUIRED)
+    # On Arch Linux the Qt6 tools are installed below /usr/lib/qt6/bin,
+    # which is not necessarily included in PATH during package builds.
+    # Keep the cache variable overridable while also accepting the Debian
+    # spelling used by some Qt6 packages.
+    find_program(CLAMAV_LRELEASE_EXECUTABLE
+        NAMES lrelease lrelease-qt6
+        HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin
+        REQUIRED)
     set(CLAMAV_TRANSLATION_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/clamav/translations")
     set(CLAMAV_SCAN_DUTCH_QM "${CMAKE_CURRENT_BINARY_DIR}/clamav-scan_nl.qm")
     set(CLAMAV_QUARANTINE_DUTCH_QM "${CMAKE_CURRENT_BINARY_DIR}/clamav-quarantine_nl.qm")

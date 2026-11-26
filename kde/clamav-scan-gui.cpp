@@ -60,7 +60,31 @@
 
 namespace {
 
-static const int maxActivityEntries = 2000;
+static int activityEntryLimit()
+{
+    QFile meminfo(QStringLiteral("/proc/meminfo"));
+    if (!meminfo.open(QIODevice::ReadOnly | QIODevice::Text))
+        return 2000;
+    while (!meminfo.atEnd()) {
+        const QList<QByteArray> fields = meminfo.readLine().simplified().split(' ');
+        if (fields.size() < 2 || fields.at(0) != "MemAvailable:")
+            continue;
+        bool ok = false;
+        const qint64 availableKiB = fields.at(1).toLongLong(&ok);
+        if (!ok)
+            return 2000;
+        if (availableKiB < 512 * 1024)
+            return 40;
+        if (availableKiB < 1024 * 1024)
+            return 100;
+        if (availableKiB < 2048 * 1024)
+            return 500;
+        if (availableKiB < 4096 * 1024)
+            return 100;
+        return 2000;
+    }
+    return 2000;
+}
 
 static int detectionLevel(const QString &detection)
 {
@@ -1371,14 +1395,14 @@ private:
                     currentFile_ = line.mid(QStringLiteral("SCAN_FILE: ").size());
                     activityEntries_.append({currentFile_, {}, QStringLiteral("scanning"), {}});
                     ++activityTotalCount_;
-                    if (activityEntries_.size() > maxActivityEntries)
+                    if (activityEntries_.size() > maxActivityEntries_)
                         activityEntries_.removeFirst();
                     activityIndices_.clear();
                     for (int activityIndex = 0; activityIndex < activityEntries_.size(); ++activityIndex)
                         activityIndices_.insert(activityEntries_.at(activityIndex).path, activityIndex);
                     currentActivityIndex_ = activityEntries_.size() - 1;
                     if (activityVisible) {
-                        if (activityList_->count() >= maxActivityEntries)
+                        if (activityList_->count() >= maxActivityEntries_)
                             delete activityList_->takeItem(0);
                         activityList_->addItem(QString());
                         updateActivityItem(currentActivityIndex_);
@@ -2154,6 +2178,7 @@ private:
     QString statusText_;
     QList<DetectionEntry> detectedFiles_;
     QList<ActivityEntry> activityEntries_;
+    const int maxActivityEntries_ = activityEntryLimit();
     int activityDetectionCount_ = 0;
     QString selectedDetectionPath_;
     QString selectedDetectionName_;

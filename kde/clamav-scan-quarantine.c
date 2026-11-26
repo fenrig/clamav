@@ -198,7 +198,6 @@ static void scan_one(const char *path)
     } else if (infected && scan_status != 2)
         scan_status = 1;
     pthread_mutex_unlock(&scan_mutex);
-    json_object_put(result);
 }
 
 static void *scan_heartbeat(void *unused)
@@ -247,7 +246,8 @@ static void *scan_worker(void *argument)
     for (;;) {
         char *path = NULL;
         pthread_mutex_lock(&scan_mutex);
-        while (!scan_stop && (next_scan_path >= scan_path_count || worker_id >= scan_workers))
+        while (!scan_stop && worker_id >= scan_workers
+                && next_scan_path < scan_path_count)
             pthread_cond_wait(&scan_condition, &scan_mutex);
         if (scan_stop || next_scan_path >= scan_path_count) {
             pthread_mutex_unlock(&scan_mutex);

@@ -567,10 +567,15 @@ public:
             quarantineDetectedFiles();
         });
         buttons->addWidget(quarantineButton_);
-        pauseButton_ = new QPushButton(tr("Pause scan"), this);
-        pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-pause")));
+        pauseButton_ = new QPushButton(tr("Scan"), this);
+        pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
         pauseButton_->setEnabled(false);
-        connect(pauseButton_, &QPushButton::clicked, this, [this] { pauseOrResumeScan(); });
+        connect(pauseButton_, &QPushButton::clicked, this, [this] {
+            if (finished_ || waitingForTargets_)
+                startScanProcess();
+            else
+                pauseOrResumeScan();
+        });
         buttons->addWidget(pauseButton_);
         action_ = new QPushButton(tr("Stop scan"), this);
         connect(action_, &QPushButton::clicked, this, [this] { cancelOrClose(); });
@@ -985,6 +990,16 @@ private:
                                 static_cast<QWidget *>(clearPathsButton_)})
             if (widget)
                 widget->setEnabled(enabled);
+        if (waitingForTargets_) {
+            pauseButton_->setText(tr("Scan"));
+            pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("media-playback-start")));
+            pauseButton_->setEnabled(enabled && !paths_.isEmpty());
+        } else if (finished_) {
+            pauseButton_->setText(tr("Rescan"));
+            pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh"),
+                                                    QIcon::fromTheme(QStringLiteral("media-playback-start"))));
+            pauseButton_->setEnabled(enabled && !paths_.isEmpty());
+        }
         rescanButton_->setEnabled(enabled && (finished_ || waitingForTargets_) && !paths_.isEmpty());
     }
 
@@ -1834,7 +1849,10 @@ private:
         updateStatusCard();
         action_->setEnabled(true);
         action_->setText(tr("Close"));
-        pauseButton_->setEnabled(false);
+        pauseButton_->setText(tr("Rescan"));
+        pauseButton_->setIcon(QIcon::fromTheme(QStringLiteral("view-refresh"),
+                                                QIcon::fromTheme(QStringLiteral("media-playback-start"))));
+        pauseButton_->setEnabled(!paths_.isEmpty());
         stopStatusButton_->setVisible(false);
         stopStatusButton_->setEnabled(false);
         rescanButton_->setText(tr("Rescan"));

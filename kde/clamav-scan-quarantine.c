@@ -15,6 +15,7 @@ static size_t next_scan_path;
 static int scan_workers = 2;
 static int scan_status;
 static int scan_stop;
+static int scan_paused;
 static int scan_cancel_requested;
 static int completed_scan_files;
 static int failed_scan_files;
@@ -262,8 +263,8 @@ static void *scan_worker(void *argument)
     for (;;) {
         char *path = NULL;
         pthread_mutex_lock(&scan_mutex);
-        while (!scan_stop && worker_id >= scan_workers
-                && next_scan_path < scan_path_count)
+        while (!scan_stop && next_scan_path < scan_path_count
+                && (scan_paused || worker_id >= scan_workers))
             pthread_cond_wait(&scan_condition, &scan_mutex);
         if (scan_stop || next_scan_path >= scan_path_count) {
             pthread_mutex_unlock(&scan_mutex);
@@ -328,6 +329,15 @@ static void *scan_control(void *unused)
                 requested = available_scan_workers();
             pthread_mutex_lock(&scan_mutex);
             scan_workers = requested;
+            pthread_cond_broadcast(&scan_condition);
+            pthread_mutex_unlock(&scan_mutex);
+        } else if (strncmp(line, "PAUSE", 5) == 0) {
+            pthread_mutex_lock(&scan_mutex);
+            scan_paused = 1;
+            pthread_mutex_unlock(&scan_mutex);
+        } else if (strncmp(line, "RESUME", 6) == 0) {
+            pthread_mutex_lock(&scan_mutex);
+            scan_paused = 0;
             pthread_cond_broadcast(&scan_condition);
             pthread_mutex_unlock(&scan_mutex);
         } else if (strncmp(line, "CANCEL", 6) == 0) {

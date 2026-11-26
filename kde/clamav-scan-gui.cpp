@@ -51,7 +51,6 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
-#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
@@ -189,25 +188,6 @@ struct ActivityEntry {
     QString status;
     QString error;
 };
-
-QList<qint64> clamdPids()
-{
-    QList<qint64> pids;
-    DIR *directory = opendir("/proc");
-    if (!directory)
-        return pids;
-    while (const dirent *entry = readdir(directory)) {
-        bool numeric = false;
-        const qint64 pid = QByteArray(entry->d_name).toLongLong(&numeric);
-        if (!numeric)
-            continue;
-        QFile comm(QStringLiteral("/proc/%1/comm").arg(pid));
-        if (comm.open(QIODevice::ReadOnly) && comm.readAll().trimmed() == "clamd")
-            pids << pid;
-    }
-    closedir(directory);
-    return pids;
-}
 
 QStringList configuredSockets()
 {
@@ -377,9 +357,12 @@ public:
         auto *scanPage = new QWidget(tabs_);
         scanPage_ = scanPage;
         auto *scanLayout = new QVBoxLayout(scanPage);
+        scanLayout->setContentsMargins(20, 18, 20, 18);
+        scanLayout->setSpacing(12);
 
         summary_ = new QLabel(tr("Preparing scan…"), this);
-        summary_->setStyleSheet(QStringLiteral("font-size: 15px; font-weight: 600; color: palette(window-text);"));
+        summary_->setStyleSheet(QStringLiteral(
+            "font-size: 16px; font-weight: 600; color: palette(window-text); padding: 2px 0;"));
         layout->addWidget(summary_);
         statusCard_ = new QFrame(this);
         statusCard_->setObjectName(QStringLiteral("scanStatusCard"));
@@ -520,25 +503,37 @@ public:
         });
 
         auto *cards = new QHBoxLayout;
+        cards->setSpacing(24);
         queueStatus_ = addCard(cards, tr("Queue"), tr("Waiting for clamd…"), &queueMeter_);
-        cpuStatus_ = addCard(cards, tr("CPU"), tr("Waiting for clamd…"), &cpuMeter_);
         scanLayout->addLayout(cards);
 
         progress_ = new QProgressBar(this);
         progress_->setRange(0, 0);
         progress_->setTextVisible(true);
         progress_->setFormat(tr("Scanning…"));
+        progress_->setFixedHeight(10);
+        progress_->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: none; border-radius: 5px; background: palette(midlight); "
+            "color: transparent; }"
+            "QProgressBar::chunk { border-radius: 5px; background: #3daee9; }"));
         scanLayout->addWidget(progress_);
         currentFileLabel_ = new QLabel(tr("Current file: preparing…"), this);
         currentFileLabel_->setStyleSheet(QStringLiteral("color: palette(window-text);"));
         currentFileLabel_->setWordWrap(false);
         scanLayout->addWidget(currentFileLabel_);
         auto *activity = new QGroupBox(tr("Scan activity"), this);
+        activity->setStyleSheet(QStringLiteral(
+            "QGroupBox { font-weight: 600; border: 1px solid palette(midlight); "
+            "border-radius: 8px; margin-top: 10px; padding: 12px 8px 8px 8px; }"
+            "QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; "
+            "color: palette(window-text); background: palette(window); }"));
         auto *activityLayout = new QVBoxLayout(activity);
+        activityLayout->setContentsMargins(4, 8, 4, 4);
         activityList_ = new QListWidget(activity);
         activityList_->setFrameShape(QFrame::NoFrame);
         activityList_->setWordWrap(true);
         activityList_->setAlternatingRowColors(false);
+        activityList_->setSpacing(3);
         activitySummary_ = new QLabel(tr("No files scanned yet."), activity);
         activitySummary_->setStyleSheet(QStringLiteral("font-weight: 600; color: palette(mid);"));
         activitySummary_->setWordWrap(true);
@@ -593,10 +588,15 @@ public:
                 scanFinished(127);
             }
         });
-        connect(&metricsTimer_, &QTimer::timeout, this, [this] { updateMetrics(); });
-        metricsTimer_.start(30000);
         connect(&statsTimer_, &QTimer::timeout, this, [this] { updateQueue(); });
         statsTimer_.start(30000);
+        queueFollowupTimer_.setSingleShot(true);
+        connect(&queueFollowupTimer_, &QTimer::timeout, this, [this] {
+            if (!finished_)
+                return;
+            if (!updateQueue())
+                queueFollowupTimer_.start(60000);
+        });
         scanWatchdogTimer_.setInterval(1000);
         connect(&scanWatchdogTimer_, &QTimer::timeout, this, [this] {
             if (finished_ || paused_ || !lastScanEventValid_)
@@ -844,7 +844,6 @@ public:
         if (paths_.isEmpty()) {
             waitingForTargets_ = true;
             pulseTimer_.stop();
-            metricsTimer_.stop();
             statsTimer_.stop();
             fileDisplayTimer_.stop();
             tabs_->setCurrentWidget(targetsPanel_);
@@ -999,10 +998,6 @@ private:
         paused_ = false;
         closeLogged_ = false;
         scanId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        cpuSample_ = -1;
-        sampleTime_ = 0.0;
-        cpuSeconds_ = 0.0;
-        cpuPeak_ = 0.0;
         infectionDetected_ = false;
         infectionDetected_ = !detectedFiles_.isEmpty();
         currentDetectionKeys_.clear();
@@ -1035,10 +1030,10 @@ private:
         started_ = std::chrono::steady_clock::now();
         pulseOn_ = false;
         pulseTimer_.start();
-        metricsTimer_.start(30000);
         statsTimer_.start(30000);
         fileDisplayTimer_.start();
         scanWatchdogTimer_.start();
+        queueFollowupTimer_.stop();
         lastScanEvent_ = std::chrono::steady_clock::now();
         lastScanEventValid_ = true;
         scannerStale_ = false;
@@ -1048,9 +1043,6 @@ private:
                               QString::number(workersSpinBox_->value())};
         arguments += paths_;
         process_->start(scanner_, arguments);
-        pids_ = {process_->processId()};
-        cpuTarget_ = clamdPids().isEmpty() ? tr("Scanner") : tr("ClamAV");
-        updateMetrics();
         updateQueue();
         writeAudit(QStringLiteral("scan-start"), QString(),
                    QStringLiteral("scanner=%1; targets=%2").arg(scanner_).arg(paths_.size()));
@@ -1203,9 +1195,8 @@ private:
                     QProgressBar **meter = nullptr)
     {
         auto *card = new QFrame(this);
-        card->setFrameShape(QFrame::StyledPanel);
-        card->setStyleSheet(QStringLiteral(
-            "QFrame { background: palette(alternate-base); border: 1px solid palette(mid); border-radius: 8px; }"));
+        card->setFrameShape(QFrame::NoFrame);
+        card->setStyleSheet(QStringLiteral("QFrame { background: transparent; border: none; }"));
         auto *cardLayout = new QVBoxLayout(card);
         auto *label = new QLabel(title, card);
         label->setStyleSheet(QStringLiteral("font-weight: 600;"));
@@ -1286,32 +1277,6 @@ private:
         statusIcon_->setPixmap(pixmap);
     }
 
-    qint64 processCpuTime() const
-    {
-        qint64 ticks = 0;
-        bool found = false;
-        for (const qint64 pid : pids_) {
-            QFile stat(QStringLiteral("/proc/%1/stat").arg(pid));
-            if (!stat.open(QIODevice::ReadOnly))
-                continue;
-            const QByteArray contents = stat.readAll();
-            const int closingParenthesis = contents.lastIndexOf(')');
-            if (closingParenthesis < 0)
-                continue;
-            const QList<QByteArray> fields = contents.mid(closingParenthesis + 1).simplified().split(' ');
-            if (fields.size() < 13)
-                continue;
-            bool okUser = false, okKernel = false;
-            const qint64 user = fields.at(11).toLongLong(&okUser);
-            const qint64 kernel = fields.at(12).toLongLong(&okKernel);
-            if (okUser && okKernel) {
-                ticks += user + kernel;
-                found = true;
-            }
-        }
-        return found ? ticks : -1;
-    }
-
     void readOutput()
     {
         outputBuffer_ += process_->readAllStandardOutput();
@@ -1352,6 +1317,8 @@ private:
                         summary_->setText(tr("Preparing scan… (%1 files discovered)")
                                               .arg(event.value(QStringLiteral("discovered")).toInt()));
                     } else if (eventName == QStringLiteral("scan_started")) {
+                        summary_->setText(tr("Scanning…"));
+                        currentFileLabel_->setText(tr("Current file: waiting for scan work…"));
                         line = QStringLiteral("SCAN_TOTAL: %1").arg(event.value(QStringLiteral("total")).toInt());
                     } else if (eventName == QStringLiteral("file_started")) {
                         line = QStringLiteral("SCAN_FILE: %1").arg(event.value(QStringLiteral("path")).toString());
@@ -1519,18 +1486,19 @@ private:
             refreshDetectionsPanel();
     }
 
-    void updateQueue()
+    bool updateQueue()
     {
         const Stats stats = queryStats(socketPath_);
         if (!stats.valid) {
             queueStatus_->setText(tr("Waiting for clamd statistics…"));
             queueMeter_->setRange(0, 0);
-            return;
+            return false;
         }
         queueMeter_->setRange(0, std::max(1, stats.maximum));
         queueMeter_->setValue(std::min(stats.live, std::max(1, stats.maximum)));
         queueStatus_->setText(tr("%1 queued · %2 active · %3 idle\n%4 MiB in use")
             .arg(stats.queue).arg(stats.live).arg(stats.idle).arg(stats.memory, 0, 'f', 1));
+        return stats.queue == 0 && stats.live == 0;
     }
 
     void refreshDetectionsPanel()
@@ -1736,34 +1704,6 @@ private:
         QDesktopServices::openUrl(QUrl(target));
     }
 
-    void updateMetrics()
-    {
-        if (process_ && process_->state() != QProcess::NotRunning) {
-            pids_ = {process_->processId()};
-            const QList<qint64> daemons = clamdPids();
-            for (const qint64 pid : daemons) {
-                if (!pids_.contains(pid))
-                    pids_ << pid;
-            }
-            cpuTarget_ = daemons.isEmpty() ? tr("Scanner") : tr("ClamAV");
-        }
-        const auto now = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(now - started_).count();
-        const double delta = elapsed - sampleTime_;
-        const qint64 cpu = processCpuTime();
-        if (cpu >= 0 && cpuSample_ >= 0 && delta > 0) {
-            const double ticksPerSecond = std::max(1L, sysconf(_SC_CLK_TCK));
-            const double cpuSeconds = std::max(0.0, (cpu - cpuSample_) / ticksPerSecond);
-            const double usage = std::max(0.0, cpuSeconds / delta * 100.0);
-            cpuPeak_ = std::max(cpuPeak_, usage);
-            cpuSeconds_ += cpuSeconds;
-            cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(usage))));
-            cpuStatus_->setText(tr("%1% CPU\n%2 active").arg(usage, 0, 'f', 1).arg(cpuTarget_));
-        }
-        cpuSample_ = cpu;
-        sampleTime_ = elapsed;
-    }
-
     void cancelOrClose()
     {
         if (operationBusy_) {
@@ -1823,8 +1763,8 @@ private:
         if (pid <= 0)
             return;
         if (paused_) {
-            if (::kill(pid, SIGCONT) != 0)
-                return;
+            process_->write("RESUME\n");
+            process_->waitForBytesWritten(100);
             paused_ = false;
             writeAudit(QStringLiteral("scan-continue"), QString(), QStringLiteral("scan resumed"));
             pauseButton_->setText(tr("Pause scan"));
@@ -1833,8 +1773,8 @@ private:
             summary_->setText(tr("Scan resumed."));
             pulseTimer_.start();
         } else {
-            if (::kill(pid, SIGSTOP) != 0)
-                return;
+            process_->write("PAUSE\n");
+            process_->waitForBytesWritten(100);
             paused_ = true;
             writeAudit(QStringLiteral("scan-pause"), QString(), QStringLiteral("scan paused"));
             pauseButton_->setText(tr("Continue scan"));
@@ -1851,11 +1791,12 @@ private:
         if (finished_)
             return;
         readOutput();
-        metricsTimer_.stop();
         statsTimer_.stop();
+        queueFollowupTimer_.stop();
         fileDisplayTimer_.stop();
         scanWatchdogTimer_.stop();
-        updateMetrics();
+        updateQueue();
+        queueFollowupTimer_.start(30000);
         finished_ = true;
         paused_ = false;
         waitingForTargets_ = false;
@@ -1906,10 +1847,6 @@ private:
         quarantineButton_->setEnabled(canQuarantine);
         if (canQuarantine && quarantineCheckBox_->isChecked())
             quarantineDetectedFiles();
-        cpuStatus_->setText(tr("%1: average %2% · peak %3%").arg(cpuTarget_)
-            .arg(elapsed > 0 ? cpuSeconds_ / elapsed * 100.0 : 0.0, 0, 'f', 1)
-            .arg(cpuPeak_, 0, 'f', 1));
-        cpuMeter_->setValue(std::min(100, std::max(0, static_cast<int>(cpuPeak_))));
         activityList_->scrollToBottom();
     }
 
@@ -2196,7 +2133,6 @@ private:
     QString scanId_;
     bool waitingForTargets_ = false;
     QString socketPath_;
-    QString cpuTarget_ = tr("Scanner");
     QString statusText_;
     QList<DetectionEntry> detectedFiles_;
     QList<ActivityEntry> activityEntries_;
@@ -2218,12 +2154,9 @@ private:
     int scanInfectedCount_ = 0;
     int scanSkippedCount_ = 0;
     QString scanFailureReason_;
-    QList<qint64> pids_;
     QProcess *process_ = nullptr;
     QLabel *queueStatus_ = nullptr;
-    QLabel *cpuStatus_ = nullptr;
     QProgressBar *queueMeter_ = nullptr;
-    QProgressBar *cpuMeter_ = nullptr;
     QLabel *statusIcon_ = nullptr;
     QLabel *heading_ = nullptr;
     QLabel *summary_ = nullptr;
@@ -2278,12 +2211,10 @@ private:
     QString logPath_;
     QPushButton *action_ = nullptr;
     QPushButton *pauseButton_ = nullptr;
-    QTimer metricsTimer_, statsTimer_, fileDisplayTimer_;
+    QTimer statsTimer_, queueFollowupTimer_, fileDisplayTimer_;
     QTimer scanWatchdogTimer_;
     QTimer pulseTimer_;
     std::chrono::steady_clock::time_point started_;
-    qint64 cpuSample_ = -1;
-    double sampleTime_ = 0.0, cpuSeconds_ = 0.0, cpuPeak_ = 0.0;
     bool cancelled_ = false, finished_ = false, paused_ = false, infectionDetected_ = false, pulseOn_ = false;
     bool scannerStale_ = false, lastScanEventValid_ = false;
     std::chrono::steady_clock::time_point lastScanEvent_;
